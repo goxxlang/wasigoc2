@@ -138,10 +138,17 @@ echo "[wasigocvm] building + installing (this takes a long time)…"
 cmake --build "$BUILD" --target "$BUILD_TARGET" -j "$JOBS"
 
 # wasi-sdk installs sysroot at share/wasi-sysroot; wasigocvm.bat prefers
-# toolchain/sysroot. Symlink or copy if needed.
+# toolchain/sysroot. A symlink pointing at a /mnt/* (WSL-visible) path is
+# invisible to native Windows tools -- PowerShell/CMake see it as a dead,
+# 0-byte reparse point, not a directory, even though WSL/git-bash dereference
+# it fine. wasigocvm.bat and CMakeLists.txt are exactly the consumers on the
+# other side of that boundary, so always copy when the prefix is under /mnt.
 if [[ -d "$PREFIX/share/wasi-sysroot" && ! -e "$PREFIX/sysroot" ]]; then
-  ln -sfn "$PREFIX/share/wasi-sysroot" "$PREFIX/sysroot" \
-    || { mkdir -p "$PREFIX/sysroot" && cp -a "$PREFIX/share/wasi-sysroot/." "$PREFIX/sysroot/"; }
+  case "$PREFIX" in
+    /mnt/*) mkdir -p "$PREFIX/sysroot" && cp -a "$PREFIX/share/wasi-sysroot/." "$PREFIX/sysroot/" ;;
+    *) ln -sfn "$PREFIX/share/wasi-sysroot" "$PREFIX/sysroot" \
+         || { mkdir -p "$PREFIX/sysroot" && cp -a "$PREFIX/share/wasi-sysroot/." "$PREFIX/sysroot/"; } ;;
+  esac
 fi
 
 # Stamp identity so drivers know this is a wasigocvm install.

@@ -82,6 +82,17 @@ pick_clang() {
 }
 [[ -n "$SDK_ROOT" ]] && CLANG="$(pick_clang "$SDK_ROOT" || true)"
 
+# A toolchain/ install from bootstrap.sh's default (--target install) has a
+# real sysroot but no bin/ of its own -- see toolchain/README.md. Pair that
+# sysroot with the stock wasi-sdk's clang++ instead of giving up.
+if [[ -z "${CLANG:-}" && -n "$SYSROOT" ]]; then
+  for fallback_root in "${WASI_SDK_PATH:-}" "${HOME}/wasi-sdk"; do
+    [[ -n "$fallback_root" ]] || continue
+    CLANG="$(pick_clang "$fallback_root" || true)"
+    [[ -n "$CLANG" ]] && { echo "[wasigocvm] pairing $SYSROOT with clang++ from $fallback_root (no bin/ of its own)"; break; }
+  done
+fi
+
 if [[ -z "${CLANG:-}" || -z "${SYSROOT:-}" ]]; then
   echo "error: no wasigocvm clang/sysroot — run toolchain/bootstrap.sh or set WASIGO_TOOLCHAIN" >&2
   exit 1

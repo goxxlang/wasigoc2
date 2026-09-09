@@ -73,13 +73,29 @@ if(NOT DEFINED WASIGO_WASI_SDK_PATH)
 endif()
 
 # wasigocvm install (bootstrap / CI) preferred for *_wasigocvm goldens.
+# A bootstrap.sh `install`-target run (the default -- see toolchain/README.md)
+# produces a real sysroot but no bin/wasm32-*-clang++ of its own; only a
+# --dist run would. So sysroot-root and clang-root are searched
+# independently: prefer a toolchain install that has BOTH under one root,
+# else pair a toolchain sysroot-only install with the stock wasi-sdk clang++.
 set(WASIGO_GOCVM_SDK_PATH "")
+set(WASIGO_GOCVM_SYSROOT_PATH "")
 if(DEFINED ENV{WASIGO_TOOLCHAIN} AND EXISTS "$ENV{WASIGO_TOOLCHAIN}/bin")
   set(WASIGO_GOCVM_SDK_PATH "$ENV{WASIGO_TOOLCHAIN}")
 elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/toolchain/bin")
   set(WASIGO_GOCVM_SDK_PATH "${CMAKE_CURRENT_SOURCE_DIR}/toolchain")
+elseif(DEFINED ENV{WASIGO_TOOLCHAIN} AND EXISTS "$ENV{WASIGO_TOOLCHAIN}/sysroot")
+  set(WASIGO_GOCVM_SYSROOT_PATH "$ENV{WASIGO_TOOLCHAIN}")
+  set(WASIGO_GOCVM_SDK_PATH "${WASIGO_WASI_SDK_PATH}")
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/toolchain/sysroot")
+  set(WASIGO_GOCVM_SYSROOT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/toolchain")
+  set(WASIGO_GOCVM_SDK_PATH "${WASIGO_WASI_SDK_PATH}")
 elseif(WASIGO_WASI_SDK_PATH)
   set(WASIGO_GOCVM_SDK_PATH "${WASIGO_WASI_SDK_PATH}")
+endif()
+if(WASIGO_GOCVM_SYSROOT_PATH AND WASIGO_GOCVM_SDK_PATH)
+  message(STATUS "wasigo: pairing wasigocvm sysroot at ${WASIGO_GOCVM_SYSROOT_PATH}/sysroot "
+                  "with clang++ from ${WASIGO_GOCVM_SDK_PATH} (no bin/ of its own -- install-target build)")
 endif()
 
 set(WASIGO_HAVE_WASI_SDK FALSE)
@@ -105,13 +121,19 @@ if(WASIGO_GOCVM_SDK_PATH)
     PATHS "${WASIGO_GOCVM_SDK_PATH}/bin"
     NO_DEFAULT_PATH
   )
-  if(EXISTS "${WASIGO_GOCVM_SDK_PATH}/sysroot")
-    set(WASIGO_GOCVM_SYSROOT "${WASIGO_GOCVM_SDK_PATH}/sysroot")
-  elseif(EXISTS "${WASIGO_GOCVM_SDK_PATH}/share/wasi-sysroot")
-    set(WASIGO_GOCVM_SYSROOT "${WASIGO_GOCVM_SDK_PATH}/share/wasi-sysroot")
+  # WASIGO_GOCVM_SYSROOT_PATH set means: pair a toolchain/ sysroot with the
+  # clang++ found above from a DIFFERENT root (see the search block above).
+  set(_gocvm_sysroot_root "${WASIGO_GOCVM_SDK_PATH}")
+  if(WASIGO_GOCVM_SYSROOT_PATH)
+    set(_gocvm_sysroot_root "${WASIGO_GOCVM_SYSROOT_PATH}")
+  endif()
+  if(EXISTS "${_gocvm_sysroot_root}/sysroot")
+    set(WASIGO_GOCVM_SYSROOT "${_gocvm_sysroot_root}/sysroot")
+  elseif(EXISTS "${_gocvm_sysroot_root}/share/wasi-sysroot")
+    set(WASIGO_GOCVM_SYSROOT "${_gocvm_sysroot_root}/share/wasi-sysroot")
   endif()
   if(WASIGO_CLANGXX_P2)
-    message(STATUS "wasigo: wasigocvm clang++ at ${WASIGO_CLANGXX_P2}")
+    message(STATUS "wasigo: wasigocvm clang++ at ${WASIGO_CLANGXX_P2}, sysroot at ${WASIGO_GOCVM_SYSROOT}")
   else()
     message(STATUS "wasigo: no wasigocvm/wasip2 clang++ under ${WASIGO_GOCVM_SDK_PATH}/bin")
   endif()

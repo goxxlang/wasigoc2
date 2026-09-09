@@ -148,6 +148,17 @@ if not defined WASIGO_SYSROOT if exist "%USERPROFILE%\wasi-sdk\share\wasi-sysroo
 )
 if not defined WASIGO_SYSROOT exit /b 0
 call :pick_clang "%WASIGO_SDK_ROOT%"
+rem A bootstrap.sh --target install run (the default) has a real sysroot
+rem but no bin\ of its own (see toolchain\README.md) -- pair that sysroot
+rem with the stock wasi-sdk's clang++ instead of giving up.
+if not defined WASIGO_CLANG if defined WASI_SDK_PATH (
+  call :pick_clang "%WASI_SDK_PATH%"
+  if defined WASIGO_CLANG echo [wasigocvm] pairing %WASIGO_SYSROOT% with clang++ from %WASI_SDK_PATH% ^(no bin\ of its own^)
+)
+if not defined WASIGO_CLANG if exist "%USERPROFILE%\wasi-sdk\bin" (
+  call :pick_clang "%USERPROFILE%\wasi-sdk"
+  if defined WASIGO_CLANG echo [wasigocvm] pairing %WASIGO_SYSROOT% with clang++ from %USERPROFILE%\wasi-sdk ^(no bin\ of its own^)
+)
 exit /b 0
 
 :pick_clang
