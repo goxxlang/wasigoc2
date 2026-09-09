@@ -1,0 +1,49 @@
+name: wasigocvm-toolchain
+
+# Builds a wasigocvm sysroot (wasi-sdk + exceptions) and uploads it as an
+# artifact. Consume on Windows by extracting into go++/toolchain/ and setting
+# WASIGO_TOOLCHAIN to that directory.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "toolchain/**"
+      - ".github/workflows/wasigocvm-toolchain.yml"
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build git python3 ccache
+
+      - name: Bootstrap wasigocvm sysroot
+        env:
+          CMAKE_GENERATOR: Ninja
+          WASIGO_BOOTSTRAP_JOBS: "4"
+        run: |
+          chmod +x toolchain/bootstrap.sh
+          ./toolchain/bootstrap.sh --jobs 4
+
+      - name: Pack toolchain (bin + sysroot + stamp)
+        run: |
+          cd toolchain
+          tar -czf ../wasigocvm-toolchain.tar.gz \
+            wasigocvm-toolchain.json \
+            bin \
+            sysroot \
+            share 2>/dev/null || \
+          tar -czf ../wasigocvm-toolchain.tar.gz \
+            wasigocvm-toolchain.json bin sysroot
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasigocvm-toolchain
+          path: wasigocvm-toolchain.tar.gz
+          retention-days: 14

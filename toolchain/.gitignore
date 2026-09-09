@@ -1,0 +1,10 @@
+# Built / downloaded wasigocvm sysroot and wasi-sdk source checkouts.
+# Prefer cloning sources to ~/wasigocvm-wasi-sdk-src on WSL (see bootstrap.sh).
+sysroot/
+bin/
+share/
+wasi-sdk-src/
+wasi-sdk-build/
+wasigocvm-toolchain.json
+*.wasm
+*.tar.gz
