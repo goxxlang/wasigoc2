@@ -21,7 +21,15 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build git python3 ccache
+          sudo apt-get install -y cmake ninja-build git python3 ccache curl
+          # wasi-sdk's CMake refuses a non-Clang host compiler, and its
+          # exceptions support needs >=22 -- ubuntu-latest's default clang
+          # package isn't guaranteed to be new enough, so pull a pinned
+          # version from apt.llvm.org the same way toolchain/bootstrap.sh's
+          # own host-compiler search expects to find it (clang-22 first).
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
 
       - name: Bootstrap wasigocvm sysroot
         env:
@@ -34,13 +42,13 @@ jobs:
       - name: Pack toolchain (bin + sysroot + stamp)
         run: |
           cd toolchain
-          tar -czf ../wasigocvm-toolchain.tar.gz \
-            wasigocvm-toolchain.json \
-            bin \
-            sysroot \
-            share 2>/dev/null || \
-          tar -czf ../wasigocvm-toolchain.tar.gz \
-            wasigocvm-toolchain.json bin sysroot
+          # bin/ only exists for a --dist build (see bootstrap.sh); the
+          # default `install` target this workflow runs doesn't produce it,
+          # so don't hard-fail packaging over its absence.
+          entries="wasigocvm-toolchain.json sysroot"
+          [ -d bin ] && entries="$entries bin"
+          [ -d share ] && entries="$entries share"
+          tar -czf ../wasigocvm-toolchain.tar.gz $entries
 
       - uses: actions/upload-artifact@v4
         with:
