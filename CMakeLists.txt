@@ -93,10 +93,6 @@ elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/toolchain/sysroot")
 elseif(WASIGO_WASI_SDK_PATH)
   set(WASIGO_GOCVM_SDK_PATH "${WASIGO_WASI_SDK_PATH}")
 endif()
-if(WASIGO_GOCVM_SYSROOT_PATH AND WASIGO_GOCVM_SDK_PATH)
-  message(STATUS "wasigo: pairing wasigocvm sysroot at ${WASIGO_GOCVM_SYSROOT_PATH}/sysroot "
-                  "with clang++ from ${WASIGO_GOCVM_SDK_PATH} (no bin/ of its own -- install-target build)")
-endif()
 
 set(WASIGO_HAVE_WASI_SDK FALSE)
 if(WASIGO_WASI_SDK_PATH)
@@ -121,8 +117,44 @@ if(WASIGO_GOCVM_SDK_PATH)
     PATHS "${WASIGO_GOCVM_SDK_PATH}/bin"
     NO_DEFAULT_PATH
   )
+  # A toolchain/bin bootstrap.sh run built on WSL can leave real ELF/Linux
+  # binaries sitting under a Windows checkout's toolchain/bin (copied, not
+  # built here): find_program can locate them (or, depending on how their
+  # permission bits landed on this filesystem, fail to -- CMP0109's
+  # "executable AND readable" default OLD behavior trips on this too), but
+  # either way they're not a usable Windows compiler. Probe the PE magic
+  # when something WAS found, and treat "not found at all" the same way, so
+  # a toolchain/bin that's really a foreign-platform build falls back to
+  # pairing its sysroot with the stock wasi-sdk's own native
+  # wasm32-wasip2-clang++ instead of silently disabling every *_wasigocvm
+  # golden.
+  set(_wasigo_p2_native TRUE)
+  if(WIN32 AND WASIGO_CLANGXX_P2)
+    file(READ "${WASIGO_CLANGXX_P2}" _wasigo_p2_magic LIMIT 2 HEX)
+    if(NOT _wasigo_p2_magic STREQUAL "4d5a")
+      set(_wasigo_p2_native FALSE)
+    endif()
+  endif()
+  if((NOT WASIGO_CLANGXX_P2 OR NOT _wasigo_p2_native)
+     AND WASIGO_WASI_SDK_PATH AND NOT WASIGO_GOCVM_SDK_PATH STREQUAL WASIGO_WASI_SDK_PATH)
+    message(STATUS "wasigo: no usable native wasm32-wasip2-clang++ under ${WASIGO_GOCVM_SDK_PATH}/bin "
+                    "(not found, or a non-Windows binary -- e.g. a WSL toolchain/bin bootstrap output) "
+                    "-- pairing its sysroot with wasi-sdk's clang++ instead")
+    if(NOT WASIGO_GOCVM_SYSROOT_PATH)
+      set(WASIGO_GOCVM_SYSROOT_PATH "${WASIGO_GOCVM_SDK_PATH}")
+    endif()
+    set(WASIGO_GOCVM_SDK_PATH "${WASIGO_WASI_SDK_PATH}")
+    unset(WASIGO_CLANGXX_P2 CACHE)
+    find_program(WASIGO_CLANGXX_P2
+      NAMES wasm32-wasigocvm-clang++ wasm32-wasigocvm-clang++.exe
+            wasm32-wasip2-clang++ wasm32-wasip2-clang++.exe
+      PATHS "${WASIGO_GOCVM_SDK_PATH}/bin"
+      NO_DEFAULT_PATH
+    )
+  endif()
   # WASIGO_GOCVM_SYSROOT_PATH set means: pair a toolchain/ sysroot with the
-  # clang++ found above from a DIFFERENT root (see the search block above).
+  # clang++ found above from a DIFFERENT root (see the search block above,
+  # and the non-native fallback just above).
   set(_gocvm_sysroot_root "${WASIGO_GOCVM_SDK_PATH}")
   if(WASIGO_GOCVM_SYSROOT_PATH)
     set(_gocvm_sysroot_root "${WASIGO_GOCVM_SYSROOT_PATH}")
@@ -144,6 +176,24 @@ if(NOT WASIGO_HAVE_WASI_SDK)
 endif()
 
 find_program(WASIGO_WASMTIME NAMES wasmtime wasmtime.exe)
+
+# gocvm_host.exe: the sibling ~/shim_sandbox repo's companion native process
+# for WASIGOCVM_HOST_BRIDGE goldens (os.exec/os.user/syscall/tls.dial --
+# topics that categorically cannot run inside the wasm32 sandbox). Optional,
+# same "golden tests still run, just stop short" pattern as wasi-sdk above.
+find_program(WASIGO_GOCVM_HOST_EXE
+  NAMES gocvm_host gocvm_host.exe
+  PATHS "${CMAKE_CURRENT_SOURCE_DIR}/../shim_sandbox/build"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../shim_sandbox/build/Release"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../shim_sandbox/build/Debug"
+  NO_DEFAULT_PATH
+)
+find_program(WASIGO_POWERSHELL NAMES pwsh pwsh.exe powershell powershell.exe)
+if(WASIGO_GOCVM_HOST_EXE AND WASIGO_POWERSHELL)
+  message(STATUS "wasigo: gocvm_host at ${WASIGO_GOCVM_HOST_EXE}, driving *_hostbridge goldens with ${WASIGO_POWERSHELL}")
+else()
+  message(STATUS "wasigo: no gocvm_host.exe (build ~/shim_sandbox) or no powershell -- *_hostbridge goldens skipped")
+endif()
 
 # ---- Golden tests ------------------------------------------------------------
 # Each one: wasigoc translates examples/<dir>/<name>.go, then (if wasi-sdk was
@@ -241,6 +291,37 @@ function(wasigo_add_wasigocvm_golden name expected_output)
             ${_expected_file_arg}
             ${_wasi_s}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/run_golden.cmake"
+  )
+endfunction()
+
+# WASIGOCVM_HOST_BRIDGE golden: same generated C++ as wasigo_add_golden(name)
+# (that call must come first, to create the wasigo_generate_${name} target
+# this reads gen_cpp from), rebuilt with -DWASIGOCVM_HOST_BRIDGE=1 and run
+# against a real ~/shim_sandbox/gocvm_host.exe -- see
+# tests/golden/run_hostbridge_golden.ps1 for why this needs a PowerShell
+# driver instead of check_wasm.cmake's single static COMMAND (a companion
+# process has to be started between compiling and running the wasm, then
+# torn down after).
+function(wasigo_add_hostbridge_golden name)
+  if(NOT WASIGO_CLANGXX_P2 OR NOT WASIGO_WASMTIME OR NOT WASIGO_GOCVM_HOST_EXE OR NOT WASIGO_POWERSHELL)
+    return()
+  endif()
+  set(gen_cpp "${WASIGO_GEN_DIR}/${name}.cpp")
+  set(gen_wasm "${WASIGO_GEN_DIR}/${name}.hostbridge.wasm")
+  add_test(
+    NAME ${name}_hostbridge
+    COMMAND "${WASIGO_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/run_hostbridge_golden.ps1"
+            -Cmake "${CMAKE_COMMAND}"
+            -RunGoldenScript "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/run_golden.cmake"
+            -ClangXX "${WASIGO_CLANGXX_P2}"
+            -Sysroot "${WASIGO_GOCVM_SYSROOT}"
+            -IncludeDir "${WASIGO_GEN_DIR}"
+            -SrcDir "${CMAKE_CURRENT_SOURCE_DIR}/src"
+            -CppFile "${gen_cpp}"
+            -WasmFile "${gen_wasm}"
+            -Wasmtime "${WASIGO_WASMTIME}"
+            -HostExe "${WASIGO_GOCVM_HOST_EXE}"
   )
 endfunction()
 
@@ -867,6 +948,15 @@ wasigo_add_golden(structspkg "structspkg/main.go"
 wasigo_add_golden(syscallpkg "syscallpkg/main.go"
   "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/syscall/syscall.go")
+# hostbridge: syscall.Getpid() through gocvm.Call. Plain wasip1/wasigocvm
+# builds have no bridge at all, so they get the documented canned fallback
+# (1); wasigo_add_hostbridge_golden(hostbridge) below is the real assertion
+# -- it rebuilds with -DWASIGOCVM_HOST_BRIDGE=1 and checks the guest got
+# back a real, live gocvm_host.exe pid, not the fallback.
+wasigo_add_golden(hostbridge "hostbridge/main.go" "1\\n"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/syscall/syscall.go")
+wasigo_add_wasigocvm_golden(hostbridge "1\\n")
+wasigo_add_hostbridge_golden(hostbridge)
 wasigo_add_golden(unilpkg "unilpkg/main.go"
   "unil-sandbox\\nsandbox\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\nverify ok\\nroundtrip verify ok\\ntrue\\nverifybytes ok\\ntamper rejected\\ntrue\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/unil/unil.go"

@@ -2,7 +2,11 @@
 #
 # Required: CLANGXX, CPP_FILE, WASM_FILE
 # Optional: SYSROOT, WASMTIME, EXPECTED_OUTPUT, WASI_PREVIEW (p1|p2),
-#           SRC_DIR, WASMTIME_WASI, WASIGO_CXXLIB (noeh|full)
+#           SRC_DIR, WASMTIME_WASI, WASIGO_CXXLIB (noeh|full),
+#           EXTRA_DEFINES (semicolon list, each becomes -D<item>),
+#           COMPILE_ONLY (skip the run/check step -- for callers, like
+#           run_hostbridge_golden.ps1, that need to start a companion
+#           process between compiling and running the wasm)
 #
 # WASIGO_CXXLIB=full is the wasigocvm contract: eh libc++, RTTI, standard
 # WASM exceptions (not legacy). Default remains noeh for stock p1 goldens.
@@ -84,6 +88,14 @@ else()
   )
 endif()
 
+if(DEFINED EXTRA_DEFINES AND NOT EXTRA_DEFINES STREQUAL "")
+  foreach(_d IN LISTS EXTRA_DEFINES)
+    if(NOT _d STREQUAL "")
+      list(APPEND _cxx_flags "-D${_d}")
+    endif()
+  endforeach()
+endif()
+
 execute_process(
   COMMAND "${CLANGXX}" ${_target_flag}
           ${_cxx_flags}
@@ -100,4 +112,6 @@ if(NOT compile_result EQUAL 0)
     "wasi-sdk clang++ failed (${_triple}, cxxlib=${WASIGO_CXXLIB}):\n${compile_output}\n${compile_error}")
 endif()
 
-include("${CMAKE_CURRENT_LIST_DIR}/check_wasm.cmake")
+if(NOT COMPILE_ONLY)
+  include("${CMAKE_CURRENT_LIST_DIR}/check_wasm.cmake")
+endif()

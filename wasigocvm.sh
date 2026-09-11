@@ -6,18 +6,23 @@ CONFIG="${WASIGO_CONFIG:-Release}"
 GOFILE=""
 OUTWASM=""
 EXTRA=()
+HOSTBRIDGE=""
 
 usage() {
   cat <<EOF
-usage: wasigocvm.sh <file.go> [-o out.wasm]
+usage: wasigocvm.sh <file.go> [-o out.wasm] [--host-bridge]
   full libc++ / EH / RTTI, -DWASIGO_GOCVM=1
   prefers \$WASIGO_TOOLCHAIN or $ROOT/toolchain
+  --host-bridge: forward os.exec/os.user/syscall/tls.dial to a companion
+                 ../shim_sandbox/gocvm_host process over loopback TCP
+                 (start it first -- see docs/wasigocvm.md)
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
+    --host-bridge) HOSTBRIDGE=1; shift ;;
     -o) OUTWASM="$2"; shift 2 ;;
     Debug|Release) CONFIG="$1"; shift ;;
     *.go)
@@ -114,6 +119,12 @@ fi
 EH_INC="$SYSROOT/include/$TRIPLE/eh/c++/v1"
 EH_LIB="$SYSROOT/lib/$TRIPLE/eh"
 
+HOSTBRIDGE_DEFINE=()
+if [[ -n "$HOSTBRIDGE" ]]; then
+  HOSTBRIDGE_DEFINE=(-DWASIGOCVM_HOST_BRIDGE=1)
+  echo "[wasigocvm] --host-bridge: os.exec/os.user/syscall/tls.dial forward to a companion gocvm_host process"
+fi
+
 echo "[wasigocvm] $CLANG ($TRIPLE)"
 "$CLANG" -O2 -std=c++20 \
   -fexceptions -frtti \
@@ -125,7 +136,7 @@ echo "[wasigocvm] $CLANG ($TRIPLE)"
   -L "$EH_LIB" -lc++ -lc++abi -lunwind \
   -Wl,--export=__indirect_function_table \
   -I "$GO_DIR" -I "$ROOT/src" \
-  -DWASIGO_GOCVM=1 \
+  -DWASIGO_GOCVM=1 "${HOSTBRIDGE_DEFINE[@]}" \
   -o "$OUTWASM" "$GENCPP"
 
 echo

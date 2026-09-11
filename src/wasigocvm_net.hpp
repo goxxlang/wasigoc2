@@ -15,7 +15,9 @@
 // Needs -I <repo>/src on the clang++ line.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <string>
 #include <unordered_map>
@@ -73,7 +75,7 @@ class WasigocvmNetBridge : public AsyncHostBridge {
   }
 
  private:
-  enum class Op { kConnect, kAccept, kRead, kWrite, kReadFrom, kWriteTo };
+  enum class Op { kConnect, kAccept, kRead, kWrite, kReadFrom, kWriteTo, kHostRead };
 
   struct Sock {
     int fd = -1;
@@ -97,6 +99,27 @@ class WasigocvmNetBridge : public AsyncHostBridge {
   std::unordered_map<uint64_t, Sock> socks_;
   std::unordered_map<uint64_t, Parked> pending_;
   std::deque<Completion> completions_;
+
+  // Control connection to a companion native shim_sandbox host process
+  // (see shim_sandbox/src/gocvm_host.cc), for the topics that categorically
+  // cannot run inside a wasm32 sandbox (os.exec, os.user, syscall, tls.dial
+  // -- real CreateProcess/GetUserNameW/Schannel). Only armed on first use
+  // (WASIGOCVM_HOST_BRIDGE opt-in, see dispatch()'s fallback below); a
+  // build/run that never touches these topics never dials out at all.
+  //
+  // Sends are synchronous (loopback, small frames -- a bounded retry, not
+  // an unbounded spin, on the rare EWOULDBLOCK). Reads are multiplexed:
+  // multiple requests can be genuinely in flight on the one shared stream
+  // at once (unlike the send side, nothing here serializes them), so
+  // there is exactly one sentinel `pending_` entry (kHostReadId) that
+  // accumulates bytes and, each time it wakes, parses every complete
+  // frame currently buffered and resolves each by the id INSIDE that
+  // frame -- not by which pending_ entry poll() happened to pick.
+  static constexpr uint64_t kHostReadId = ~0ull;
+  int host_fd_ = -1;
+  uint64_t host_handle_ = 0;
+  std::string host_read_buf_;
+  std::vector<uint64_t> host_wait_ids_;
 
   static bool would_block() {
     return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS;
@@ -291,12 +314,174 @@ class WasigocvmNetBridge : public AsyncHostBridge {
       do_bind_probe("udp", payload, c);
       return;
     }
+#if defined(WASIGOCVM_HOST_BRIDGE)
+    // Anything else (os.exec.*, os.user, syscall.*, tls.dial) forwards
+    // as-is to the companion native host -- this bridge never needs to
+    // know the individual topic shapes, W2gSapiHandle on the host side
+    // already does.
+    do_host_call(id, topic, payload, c, parked);
+    return;
+#else
     // Hard fork: topics that still need a native host (exec, tls/Schannel,
-    // user db) stay honest failures, not a silent Pipe fallback. isNoBridge
-    // is reserved for "this build has no bridge at all".
+    // user db) stay honest failures, not a silent Pipe fallback, unless
+    // WASIGOCVM_HOST_BRIDGE opts into the companion-process forwarder
+    // above. isNoBridge is reserved for "this build has no bridge at all".
     c->ok = false;
-    c->err = "unsupported on wasigo-p2 (needs shim_sandbox native host)";
+    c->err = "unsupported on wasigocvm (needs shim_sandbox native host -- build with --shim-sandbox)";
+#endif
   }
+
+#if defined(WASIGOCVM_HOST_BRIDGE)
+  // ver=1 | id u32 | topic_len u16 | topic | payload_len u32 | payload,
+  // prefixed with a u32 total length covering everything after itself.
+  // All little-endian. Mirrors shim_sandbox/include/w2g/msg.h's shape
+  // closely enough to keep the two implementations easy to compare, but
+  // deliberately self-contained -- this header has no shim_sandbox
+  // include dependency otherwise, and every wasigocvm build compiles it.
+  static void put_u16(std::string* o, uint16_t v) {
+    o->push_back(static_cast<char>(v & 0xff));
+    o->push_back(static_cast<char>((v >> 8) & 0xff));
+  }
+  static void put_u32(std::string* o, uint32_t v) {
+    for (int i = 0; i < 4; ++i) o->push_back(static_cast<char>((v >> (8 * i)) & 0xff));
+  }
+  static uint16_t get_u16(const std::string& s, size_t off) {
+    return static_cast<uint16_t>(static_cast<uint8_t>(s[off]) |
+                                  (static_cast<uint16_t>(static_cast<uint8_t>(s[off + 1])) << 8));
+  }
+  static uint32_t get_u32(const std::string& s, size_t off) {
+    uint32_t v = 0;
+    for (int i = 0; i < 4; ++i) v |= static_cast<uint32_t>(static_cast<uint8_t>(s[off + i])) << (8 * i);
+    return v;
+  }
+
+  static std::string encode_host_frame(uint64_t id, const std::string& topic,
+                                       const std::string& payload) {
+    std::string body;
+    put_u32(&body, static_cast<uint32_t>(id));
+    put_u16(&body, static_cast<uint16_t>(topic.size()));
+    body += topic;
+    put_u32(&body, static_cast<uint32_t>(payload.size()));
+    body += payload;
+    std::string frame;
+    put_u32(&frame, static_cast<uint32_t>(body.size()));
+    frame += body;
+    return frame;
+  }
+
+  bool ensure_host_conn(std::string* err) {
+    if (host_fd_ >= 0) return true;
+    const char* addr_env = std::getenv("WASIGOCVM_HOST_ADDR");
+    std::string hostport = (addr_env && *addr_env) ? addr_env : "127.0.0.1:47821";
+    std::string host, port;
+    if (!split_hostport(hostport, &host, &port)) {
+      *err = "error: bad WASIGOCVM_HOST_ADDR " + hostport;
+      return false;
+    }
+    sockaddr_in addr{};
+    if (!fill_v4(host, port, /*bind=*/false, &addr)) {
+      *err = "error: resolve " + hostport;
+      return false;
+    }
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+      *err = syserr("socket");
+      return false;
+    }
+    // Blocking connect, deliberately: this is loopback-only, to a host
+    // process the run wrapper (w2g-run.*) already started, so it either
+    // succeeds near-instantly or fails fast with ECONNREFUSED -- neither
+    // case risks a real stall of the one cooperative thread.
+    if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+      *err = std::string("error: shim_sandbox host not reachable at ") + hostport +
+             " (start it first -- see docs/wasigocvm.md): errno " + std::to_string(errno);
+      close(fd);
+      return false;
+    }
+    set_nonblock(fd);
+    host_fd_ = fd;
+    host_handle_ = alloc(fd, /*udp=*/false, /*listen=*/false);
+    return true;
+  }
+
+  void do_host_call(uint64_t id, const std::string& topic, const std::string& payload,
+                    Completion* c, bool* parked) {
+    std::string err;
+    if (!ensure_host_conn(&err)) {
+      complete_err(c, err);
+      return;
+    }
+    std::string frame = encode_host_frame(id, topic, payload);
+    size_t off = 0;
+    int idle_spins = 0;
+    while (off < frame.size()) {
+      ssize_t n = send(host_fd_, frame.data() + off, frame.size() - off, 0);
+      if (n > 0) {
+        off += static_cast<size_t>(n);
+        idle_spins = 0;
+        continue;
+      }
+      if (n < 0 && would_block() && ++idle_spins < 1000) continue;
+      complete_err(c, n < 0 ? syserr("host send") : "error: host send stalled");
+      drop_fd(host_fd_);
+      close(host_fd_);
+      host_fd_ = -1;
+      return;
+    }
+    host_wait_ids_.push_back(id);
+    if (!pending_.count(kHostReadId)) {
+      park(kHostReadId, Op::kHostRead, host_handle_, host_fd_, POLLIN, 0, "", "");
+    }
+    *parked = true;
+  }
+
+  void fail_all_host(const std::string& why) {
+    for (uint64_t wid : host_wait_ids_) {
+      Completion fc;
+      fc.id = wid;
+      complete_err(&fc, why);
+      completions_.push_back(std::move(fc));
+    }
+    host_wait_ids_.clear();
+  }
+
+  void host_pump_read() {
+    char buf[4096];
+    ssize_t n = recv(host_fd_, buf, sizeof(buf), 0);
+    if (n == 0 || (n < 0 && !would_block())) {
+      fail_all_host(n == 0 ? "error: shim_sandbox host closed connection"
+                           : syserr("host recv"));
+      drop_fd(host_fd_);
+      close(host_fd_);
+      host_fd_ = -1;
+      host_read_buf_.clear();
+      return;
+    }
+    if (n > 0) host_read_buf_.append(buf, static_cast<size_t>(n));
+    while (host_read_buf_.size() >= 4) {
+      uint32_t body_len = get_u32(host_read_buf_, 0);
+      if (host_read_buf_.size() < 4u + body_len) break;
+      size_t off = 4;
+      uint32_t rid = get_u32(host_read_buf_, off);
+      off += 4;
+      uint16_t topic_len = get_u16(host_read_buf_, off);
+      off += 2 + topic_len;  // reply doesn't need its own topic echoed back
+      uint32_t payload_len = get_u32(host_read_buf_, off);
+      off += 4;
+      std::string payload = host_read_buf_.substr(off, payload_len);
+      host_read_buf_.erase(0, 4 + body_len);
+      auto it = std::find(host_wait_ids_.begin(), host_wait_ids_.end(), rid);
+      if (it != host_wait_ids_.end()) host_wait_ids_.erase(it);
+      Completion rc;
+      rc.id = rid;
+      complete_ok(&rc, std::move(payload));
+      completions_.push_back(std::move(rc));
+    }
+    if (!host_wait_ids_.empty()) {
+      park(kHostReadId, Op::kHostRead, host_handle_, host_fd_, POLLIN, 0, "", "");
+    }
+  }
+#endif  // WASIGOCVM_HOST_BRIDGE
 
   void do_bind_probe(const std::string& network, const std::string& address, Completion* c) {
     int fd = -1;
@@ -670,6 +855,12 @@ class WasigocvmNetBridge : public AsyncHostBridge {
         do_writeto(p.id, payload, &c, &parked);
         break;
       }
+#if defined(WASIGOCVM_HOST_BRIDGE)
+      case Op::kHostRead:
+        host_pump_read();
+        parked = true;  // host_pump_read() pushes its own completions directly
+        break;
+#endif
     }
     if (!parked) completions_.push_back(std::move(c));
   }

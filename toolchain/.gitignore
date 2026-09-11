@@ -2,6 +2,7 @@
 # Prefer cloning sources to ~/wasigocvm-wasi-sdk-src on WSL (see bootstrap.sh).
 sysroot/
 bin/
+lib/
 share/
 clang-resource-dir/
 wasi-sdk-src/

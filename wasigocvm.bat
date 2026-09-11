@@ -12,12 +12,14 @@ set "CONFIG=Release"
 set "GOFILE="
 set "OUTWASM="
 set "WASIGOC_EXTRA="
+set "HOSTBRIDGE="
 
 :parse
 if "%~1"=="" goto :parsed
 if /I "%~1"=="-h" goto :usage
 if /I "%~1"=="--help" goto :usage
 if /I "%~1"=="/?" goto :usage
+if /I "%~1"=="--host-bridge" (set "HOSTBRIDGE=1" & shift & goto :parse)
 if /I "%~1"=="-o" (
   if "%~2"=="" (echo error: -o requires a path & exit /b 2)
   set "OUTWASM=%~2"
@@ -79,8 +81,12 @@ if not defined WASIGO_TRIPLE (
 set "EH_INC=%WASIGO_SYSROOT%\include\%WASIGO_TRIPLE%\eh\c++\v1"
 set "EH_LIB=%WASIGO_SYSROOT%\lib\%WASIGO_TRIPLE%\eh"
 
+set "HOSTBRIDGE_DEFINE="
+if defined HOSTBRIDGE set "HOSTBRIDGE_DEFINE=-DWASIGOCVM_HOST_BRIDGE=1"
+
 echo [wasigocvm] %WASIGO_CLANG%
 echo             triple=%WASIGO_TRIPLE%  full libc++ + rtti + standard wasm EH
+if defined HOSTBRIDGE echo             --host-bridge: os.exec/os.user/syscall/tls.dial forward to a companion gocvm_host process
 "%WASIGO_CLANG%" -O2 -std=c++20 ^
   -fexceptions -frtti ^
   -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false ^
@@ -91,7 +97,7 @@ echo             triple=%WASIGO_TRIPLE%  full libc++ + rtti + standard wasm EH
   -L "%EH_LIB%" -lc++ -lc++abi -lunwind ^
   -Wl,--export=__indirect_function_table ^
   -I "%GO_DIR%" -I "%~dp0src" ^
-  -DWASIGO_GOCVM=1 ^
+  -DWASIGO_GOCVM=1 %HOSTBRIDGE_DEFINE% ^
   -o "%OUTWASM%" "%GENCPP%"
 if errorlevel 1 (
   echo wasigocvm clang++ failed
@@ -103,11 +109,15 @@ echo run:  ..\shim_sandbox\tools\w2g-run.bat "%OUTWASM%"
 exit /b 0
 
 :usage
-echo usage: wasigocvm.bat ^<input.go^> [-o out.wasm] [wasigoc flags...]
+echo usage: wasigocvm.bat ^<input.go^> [-o out.wasm] [--host-bridge] [wasigoc flags...]
 echo.
 echo Own target: full libc++, RTTI, WASM EH, Oilpan + type_key, gocvm net.
 echo Prefers WASIGO_TOOLCHAIN / toolchain\sysroot; else stock wasi-sdk eh.
 echo Threads need a pthread-capable sysroot ^(toolchain\bootstrap^).
+echo --host-bridge: forward os.exec/os.user/syscall/tls.dial to a companion
+echo                ..\shim_sandbox\gocvm_host.exe over loopback TCP ^(start it
+echo                first -- see docs\wasigocvm.md^). Net topics ^(net/tls.dial
+echo                excluded^) already run in-guest without this flag.
 exit /b 0
 
 :find_wasigoc

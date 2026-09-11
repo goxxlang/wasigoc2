@@ -41,6 +41,42 @@ wasigocvm.bat examples\httppkg\main.go -o httppkg.wasm
 
 ctest: `hello_wasigocvm`, `netpkg_wasigocvm`, `httppkg_wasigocvm`.
 
+## Host bridge: os.exec / os.user / syscall / tls.dial
+
+`net.*` runs entirely in-guest (`wasigocvm_net.hpp` opens real sockets from
+inside the wasm32 sandbox itself). The topics that categorically cannot --
+`os.exec.*`, `os.user`, `syscall.*`, `tls.dial` (real `CreateProcess`/
+`GetUserNameW`/Schannel) -- stay honest failures by default ("unsupported on
+wasigocvm ... build with --shim-sandbox"). `--host-bridge`
+(`wasigocvm.bat`/`.sh`, `-DWASIGOCVM_HOST_BRIDGE=1`) opts a build into
+forwarding those topics instead, over loopback TCP, to a companion native
+process:
+
+```
+..\shim_sandbox\build\gocvm_host.exe [port]     # default port 47821
+wasigocvm.bat --host-bridge examples\hostbridge\main.go -o hostbridge.wasm
+wasmtime run --dir=.::. -S inherit-network -S tcp ^
+  --env WASIGOCVM_HOST_ADDR=127.0.0.1:47821 hostbridge.wasm
+```
+
+`gocvm_host.exe` (`shim_sandbox/src/gocvm_host.cc`) accepts exactly one
+connection, decodes each request frame, runs it through `W2gSapiHandle` --
+the same real backend `goclang++.bat --shim-sandbox` links in-process, no
+logic duplicated -- and writes the reply back, then exits. One process per
+wasm-guest run, matching `w2g-run.*`'s own launch/teardown.
+
+ctest: `hostbridge_native`/`hostbridge_golden`/`hostbridge_wasigocvm` (no
+bridge -- the documented fallback, `1`) and `hostbridge_hostbridge` (real
+bridge: compiles with `WASIGOCVM_HOST_BRIDGE=1`, starts a real
+`gocvm_host.exe`, and checks the guest's `syscall.Getpid()` comes back as
+that process's *actual* live pid, not the fallback). The last one needs a
+PowerShell driver (`tests/golden/run_hostbridge_golden.ps1`), not
+`check_wasm.cmake`'s single static COMMAND -- a companion process has to be
+started between compiling and running the wasm, then torn down after.
+Skipped when `~/shim_sandbox/build/gocvm_host.exe` isn't built or no
+PowerShell is found (see the `wasigo: gocvm_host at ...` / `wasigo: no
+gocvm_host.exe ...` CMake configure message).
+
 ## Rewrite note
 
 Guest net used to key off `__wasip2__` and live in `wasip2_net.hpp`.
