@@ -1,8 +1,7 @@
-// Package exec: real on a goclang++.bat --shim-sandbox build (real
-// CreateProcess via gocvm.Call -- see runtime.hpp's wasigo::gocvm and
-// shim_sandbox's src/sapi/real_win.cc). Under plain wasm32-wasip1
-// (compile.bat), gocvm.Call itself reports no host bridge and every
-// operation returns the same honest "not supported" error as before.
+// Package exec: the child is a table-named process (EPT/TPT/CHPT) on a
+// std::thread; work is WASMWin32 wasi_call (catalog / WslExec /
+// CreateProcessW). Not a BusyBox table. A .wasm payload is load/call
+// via wasitime / WASMLoader. gocvm.Call stays in-module.
 package exec
 
 import (
@@ -15,26 +14,8 @@ import (
 
 var ErrNotFound = errors.New("exec: executable file not found in $PATH")
 
-var errNotSupported = errors.New(
-	"exec: not supported on wasm32-wasip1 (WASI preview 1 has no subprocess support)")
-
-// gocvm.Call's (string, error): err is only non-nil when there is no
-// real answer at all (no bridge). A real bridge's own failure (a real
-// CreateProcess error, ...) still comes back err == nil with the
-// payload starting "error: " -- a definitive real answer, not a signal
-// to fall back to errNotSupported.
 func isRealError(reply string) bool {
 	return strings.HasPrefix(reply, "error:")
-}
-
-// isNoBridge distinguishes "this build has no bridge at all" (the only
-// case that should fall back to errNotSupported) from every other
-// err != nil gocvm.Call can return on a real --shim-sandbox build (ABAC
-// deny, a bridge-internal panic, a reentrant call) -- those are genuine
-// operational failures and must surface as-is, not get misreported as a
-// platform limitation.
-func isNoBridge(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no host bridge registered")
 }
 
 type Cmd struct {
@@ -69,7 +50,7 @@ func (c *Cmd) argv() string {
 	return s
 }
 
-// exit=<n>\n<output> -- real_win.cc::Exec's reply shape.
+// exit=<n>\n<output> -- wasigocvm_exec.hpp combined-wait reply.
 func parseExecReply(reply string) (int, string) {
 	if !strings.HasPrefix(reply, "exit=") {
 		return -1, reply
@@ -85,7 +66,7 @@ func parseExecReply(reply string) (int, string) {
 	return n, reply[i+1:]
 }
 
-// "exit=<n>" -- real_win.cc::ExecWait's reply shape (no trailing output).
+// "exit=<n>" -- os.exec.wait reply (no trailing output).
 func parseExitCode(reply string) int {
 	if !strings.HasPrefix(reply, "exit=") {
 		return -1
@@ -97,7 +78,7 @@ func parseExitCode(reply string) int {
 	return n
 }
 
-// "ok handle=<id>" -- real_win.cc::ExecStart's reply shape.
+// "ok handle=<id>" -- os.exec.start reply.
 func parseStartHandle(reply string) string {
 	const p = "handle="
 	i := strings.Index(reply, p)
@@ -107,17 +88,11 @@ func parseStartHandle(reply string) string {
 	return reply[i+len(p):]
 }
 
-// CombinedOutput runs the command for real when a gocvm host bridge is
-// registered. The real backend redirects stdout+stderr to the same pipe
-// (see shim_sandbox's docs/architecture.md), so unlike real Go's
-// os/exec, Output() below can't isolate stdout alone -- it returns the
-// same combined bytes CombinedOutput() does.
+// CombinedOutput runs the command. Stdout and stderr are one EPT-named
+// buffer, so Output() returns the same combined bytes.
 func (c *Cmd) CombinedOutput() ([]byte, error) {
 	reply, err := gocvm.Call("os.exec", c.argv())
 	if err != nil {
-		if isNoBridge(err) {
-			return nil, errNotSupported
-		}
 		return nil, err
 	}
 	if isRealError(reply) {
@@ -160,17 +135,12 @@ func (c *Cmd) pump() {
 	c.pumpDone <- true
 }
 
-// Start launches the command for real (goclang++.bat --shim-sandbox)
-// without waiting for it to exit. If Stdout or Stderr is set, a
-// background goroutine streams the child's combined output into it as
-// it arrives; Wait below joins that goroutine before returning so all
-// output is flushed first, matching real Go's Cmd.Wait semantics.
+// Start launches the command without waiting for it to exit. If Stdout
+// or Stderr is set, a background goroutine streams the child's combined
+// output into it as it arrives; Wait joins that goroutine first.
 func (c *Cmd) Start() error {
 	reply, err := gocvm.Call("os.exec.start", c.argv())
 	if err != nil {
-		if isNoBridge(err) {
-			return errNotSupported
-		}
 		return err
 	}
 	if isRealError(reply) {
@@ -191,16 +161,13 @@ func (c *Cmd) Start() error {
 
 func (c *Cmd) Wait() error {
 	if !c.started {
-		return errNotSupported
+		return errors.New("exec: not started")
 	}
 	if c.pumpDone != nil {
 		<-c.pumpDone
 	}
 	reply, err := gocvm.Call("os.exec.wait", c.handle)
 	if err != nil {
-		if isNoBridge(err) {
-			return errNotSupported
-		}
 		return err
 	}
 	if isRealError(reply) {
@@ -214,5 +181,18 @@ func (c *Cmd) Wait() error {
 }
 
 func LookPath(file string) (string, error) {
-	return "", errNotSupported
+	reply, err := gocvm.Call("os.exec.lookpath", file)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	if isRealError(reply) {
+		return "", ErrNotFound
+	}
+	if reply == "" {
+		return "", ErrNotFound
+	}
+	return reply, nil
 }

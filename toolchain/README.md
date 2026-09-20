@@ -1,15 +1,17 @@
 # wasigocvm toolchain
 
-This is **our** WASI/C++ sysroot contract for Go++, not stock wasip2
-with extra `-f` flags.
+This is **our** C/C++ sysroot for the wasigocvm machine (driver + libc +
+`wasitime`). Not stock wasip2 with extra `-f` flags. Architecture: [docs/architecture.md](../docs/architecture.md). Product:
+[docs/wasigocvm.md](../docs/wasigocvm.md).
 
 | Pillar | Where it lives |
 | --- | --- |
-| Full **libc++** (exceptions + RTTI) | eh sysroot + `wasigocvm.bat` / `.sh` |
+| Full **libc++** (exceptions + RTTI) | eh sysroot + `compile.bat` / `wasigocvm.bat` / `.sh` |
 | **Oilpan** GC | `src/runtime.hpp` `wasigo::gc` |
 | **type_key** / go/types interning | `type_key_of<T>()`, `go/types` Object Type Identifier |
 | **Sockets** | sysroot libc + `src/wasigocvm_net.hpp` (poll workers) |
-| **Threads** | needs pthread in sysroot; stamp `threads:false` until then |
+| **TLS** | OpenSSL 3 wasm (`toolchain/openssl-wasm`) via `src/wasigocvm_tls.hpp` — WASMLime TlsTransport (memory BIO), not Schannel |
+| **Threads** | stamp `threads: true`; child memory is WASMSafeSpace cage, not wasm `--shared-memory` |
 
 ## Bootstrap
 
@@ -38,10 +40,10 @@ building LLVM/clang from scratch on top (`--dist`, unverified by this
 project so far, budget real time for it). Pair the sysroot this produces
 with an existing wasm32-wasip2-capable clang++ yourself until then.
 
-Threads stay `false` regardless: `COOP_THREADS_POSSIBLE` in
-`wasi-sdk-sysroot.cmake` needs a **>=23** host clang, a stricter gate than
-the >=22 one exceptions need. `apt.llvm.org` didn't have anything past 22
-as of 2026-09.
+The wasi-sdk CMake `COOP_THREADS_POSSIBLE` gate still wants **Clang >=23**
+for *their* pthread+`--shared-memory` layout. That is not our path: stamp
+`threads: true` with `-D_REENTRANT -lpthread`, isolation in WASMSafeSpace,
+no wasm `--shared-memory`.
 
 CI: `.github/workflows/wasigocvm-toolchain.yml` (workflow_dispatch) uploads
 `wasigocvm-toolchain.tar.gz`. Unpack into `toolchain/` and set
@@ -63,18 +65,19 @@ Drivers probe `wasm32-wasigocvm` eh layout first, then `wasm32-wasip2`.
 ## Driver (today)
 
 ```
-wasigocvm.bat examples\httppkg\main.go -o httppkg.wasm
-# or: ./wasigocvm.sh ...
-..\shim_sandbox\tools\w2g-run.bat httppkg.wasm
+compile.bat examples\httppkg\main.go -o httppkg.wasm
+wasitime httppkg.wasm
+# or: ./wasigocvm.sh ... && ./wasitime.sh ...
 ```
 
 Always: full libc++, `-DWASIGO_GOCVM=1`, standard WASM EH.
 
 ## Roadmap
 
-1. **Now:** `WASIGO_GOCVM` + eh libc++ + Oilpan + type_key + poll net + bootstrap.
+1. **Now:** sysroot + eh libc++ + Oilpan + type_key + in-guest libc/gocvm + wasitime.
 2. **Next:** land a CI-built sysroot under `toolchain/` on this machine.
-3. **Then:** shared-everything-threads / patched wasi-libc → `WASIGO_GOCVM_HAS_PTHREAD`.
+3. **Then:** `bin/wasm32-wasigocvm-clang++` as the only wrapper (drop wasip2 filename).
+4. **OpenSSL wasm:** `./toolchain/build_openssl_wasm.sh` (or `.\toolchain\build_openssl_wasm.ps1`) installs `toolchain/openssl-wasm` from the vcpkg OpenSSL 3.6.3 tree so `wasigocvm.bat` can `-lssl -lcrypto`.
 
 ## Oilpan + type_key (not optional)
 
@@ -83,5 +86,7 @@ RTTI is additive for C++ interop.
 
 ## Host
 
-`w2g-run` defaults to `-W exceptions`. `W2G_THREADS=1` is a no-op until
-the stamp says `threads: true`.
+Host instantiate of a wasigocvm module is `wasitime` (ported WASMLoader).
+Threads in the *wasi-sdk CMake* gate still want Clang >=23 until the stamp
+says `threads: true`; wasm `--shared-memory` is not our path (WASMSafeSpace
+cage is).

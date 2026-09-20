@@ -153,11 +153,15 @@ fi
 
 # Stamp identity so drivers know this is a wasigocvm install.
 mkdir -p "$PREFIX"
+THREADS_STAMP=false
+if find "$PREFIX" \( -name 'pthread.h' -o -name 'libpthread.a' \) 2>/dev/null | head -1 | grep -q .; then
+  THREADS_STAMP=true
+fi
 cat > "$PREFIX/wasigocvm-toolchain.json" <<EOF
 {
   "name": "wasigocvm",
   "exceptions": true,
-  "threads": false,
+  "threads": $THREADS_STAMP,
   "borrowed_triple": "wasm32-wasip2",
   "product_define": "WASIGO_GOCVM",
   "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",

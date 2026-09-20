@@ -1,21 +1,6 @@
-// Package net: real TCP/UDP on a goclang++.bat --shim-sandbox build
-// (gocvm.Call -- see runtime.hpp's wasigo::gocvm and shim_sandbox's
-// src/sapi/real_win.cc), including a real Listener.Accept()/Conn that
-// actually moves bytes, not just a reachability probe. wasigocvm
-// (wasigocvm.bat) registers an in-module poll() bridge for the same
-// net.* topics against the wasigocvm sysroot sockets -- same Go++
-// source, no WIT wasi:sockets world. Under plain wasm32-wasip1
-// (compile.bat), gocvm.Call itself reports no host bridge and
-// Dial/Listen fall back to the original userspace stack below: TCP is
-// net.Pipe (reliable duplex), UDP is length-prefixed datagrams over a
-// Pipe, both entirely local to this process.
-//
-//   Dial("tcp", addr)           // real if a bridge is linked, else
-//                                // only matches a local Listen via Pipe
-//   Listen("tcp", addr)         // Accept receives real or local Conns
-//   ListenPacket("udp", addr)   // UDP listen; DialPacket attaches a Pipe
-//   DialPacket("udp", addr)     // connected UDP to a ListenPacket
-//   PacketPipe()                // UDP-shaped datagram pair (framed Pipe)
+// Package net: TCP/UDP on wasigocvm (in-module poll() on sysroot
+// sockets). Pipe() / PacketPipe() are in-process duplex, not a host
+// fallback. gocvm.Call stays in-module.
 package net
 
 import (
@@ -25,37 +10,16 @@ import (
 	"strings"
 )
 
-var errNotSupported = errors.New("net: not supported on wasm32-wasip1 (WASI preview 1 has no socket syscalls)")
+var errNotSupported = errors.New("net: unsupported network")
 var errClosedPipe = errors.New("net: pipe closed")
-var errRefused = errors.New("net: connection refused")
 var errClosed = errors.New("net: listener closed")
 
-// gocvm.Call's (string, error): err is only non-nil when there is no
-// real answer at all (no bridge registered, ABAC deny, unknown topic --
-// see wasigo::gocvm::Call in runtime.hpp). A real bridge's own failure
-// (a real connect() refused, a real accept() error, ...) still comes
-// back as err == nil with the payload starting "error: " (real_win.cc's
-// own convention throughout) -- that is a definitive real answer, not a
-// signal to fall back to the local-only stub behavior below.
 func isRealError(reply string) bool {
 	return strings.HasPrefix(reply, "error:")
 }
 
-// isNoBridge distinguishes "this build has no bridge at all" (the only
-// case that should fall back to the local-only stack below) from every
-// other err != nil gocvm.Call can return on a real --shim-sandbox build
-// (ABAC deny, a bridge-internal panic, a reentrant call) -- those are
-// genuine operational failures on a build that DOES have a real bridge
-// and must surface as-is, not silently downgrade to a local-only Conn/
-// Listener that can never reach the address the caller actually asked
-// for.
-func isNoBridge(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no host bridge registered")
-}
-
 // "handle=<id>" optionally followed by " remote=<addr>" -- the shape
-// net.dial/listen/accept's real replies share (see
-// shim_sandbox/docs/architecture.md's topics table).
+// net.dial/listen/accept replies share.
 func parseHandleReply(reply string) (handle string, remote string) {
 	i := strings.Index(reply, "handle=")
 	if i < 0 {
@@ -160,6 +124,27 @@ func (c *Conn) Close() error {
 func (c *Conn) LocalAddr() string  { return c.laddr }
 func (c *Conn) RemoteAddr() string { return c.raddr }
 
+type TCPConn = Conn
+
+type Addr interface {
+	Network() string
+	String() string
+}
+
+type TCPAddr struct {
+	Host string
+	Port int
+}
+
+func (a *TCPAddr) Network() string { return "tcp" }
+
+func (a *TCPAddr) String() string {
+	if a == nil {
+		return ""
+	}
+	return JoinHostPort(a.Host, strconv.Itoa(a.Port))
+}
+
 func Pipe() (*Conn, *Conn) {
 	ab := make(chan []byte, 16)
 	ba := make(chan []byte, 16)
@@ -168,7 +153,7 @@ func Pipe() (*Conn, *Conn) {
 	return a, b
 }
 
-type Listener struct {
+type TCPListener struct {
 	valid  bool
 	closed bool
 	addr   string
@@ -177,34 +162,43 @@ type Listener struct {
 	handle string
 }
 
-func (l *Listener) Addr() string { return l.addr }
+type Listener interface {
+	Accept() (*Conn, error)
+	Close() error
+	Addr() Addr
+}
 
-func (l *Listener) Accept() (*Conn, error) {
+func (l *TCPListener) Addr() Addr {
+	if l == nil {
+		return nil
+	}
+	host, port, err := SplitHostPort(l.addr)
+	n := 0
+	if err == nil {
+		n, _ = strconv.Atoi(port)
+	}
+	return &TCPAddr{Host: host, Port: n}
+}
+
+func (l *TCPListener) Accept() (*Conn, error) {
 	if l == nil || !l.valid {
 		return nil, errNotSupported
 	}
 	if l.closed {
 		return nil, errClosed
 	}
-	if l.real {
-		reply, err := gocvm.Call("net.accept", l.handle)
-		if err != nil {
-			return nil, err
-		}
-		if isRealError(reply) {
-			return nil, errors.New(reply)
-		}
-		h, remote := parseHandleReply(reply)
-		return &Conn{valid: true, real: true, handle: h, laddr: l.addr, raddr: remote}, nil
+	reply, err := gocvm.Call("net.accept", l.handle)
+	if err != nil {
+		return nil, err
 	}
-	c, ok := <-l.accept
-	if !ok {
-		return nil, errClosed
+	if isRealError(reply) {
+		return nil, errors.New(reply)
 	}
-	return c, nil
+	h, remote := parseHandleReply(reply)
+	return &Conn{valid: true, real: true, handle: h, laddr: l.addr, raddr: remote}, nil
 }
 
-func (l *Listener) Close() error {
+func (l *TCPListener) Close() error {
 	if l == nil || !l.valid {
 		return errNotSupported
 	}
@@ -212,39 +206,23 @@ func (l *Listener) Close() error {
 		return nil
 	}
 	l.closed = true
-	if l.real {
-		gocvm.Call("net.io.close", l.handle)
-		return nil
-	}
-	close(l.accept)
-	forgetTCP(l.addr)
+	gocvm.Call("net.io.close", l.handle)
 	return nil
 }
 
-var tcpBound = map[string]*Listener{}
-
-func forgetTCP(address string) {
-	tcpBound[address] = nil
-}
-
-func Listen(network string, address string) (*Listener, error) {
+func Listen(network string, address string) (*TCPListener, error) {
 	if network != "tcp" && network != "tcp4" && network != "tcp6" {
 		return nil, errNotSupported
 	}
 	reply, err := gocvm.Call("net.listen", network+" "+address)
-	if err == nil {
-		if isRealError(reply) {
-			return nil, errors.New(reply)
-		}
-		h, _ := parseHandleReply(reply)
-		return &Listener{valid: true, real: true, handle: h, addr: address, accept: make(chan *Conn, 1)}, nil
-	}
-	if !isNoBridge(err) {
+	if err != nil {
 		return nil, err
 	}
-	ln := &Listener{valid: true, addr: address, accept: make(chan *Conn, 1)}
-	tcpBound[address] = ln
-	return ln, nil
+	if isRealError(reply) {
+		return nil, errors.New(reply)
+	}
+	h, _ := parseHandleReply(reply)
+	return &TCPListener{valid: true, real: true, handle: h, addr: address, accept: make(chan *Conn, 1)}, nil
 }
 
 func Dial(network string, address string) (*Conn, error) {
@@ -252,35 +230,14 @@ func Dial(network string, address string) (*Conn, error) {
 		return nil, errNotSupported
 	}
 	reply, err := gocvm.Call("net.dial", network+" "+address)
-	if err == nil {
-		if isRealError(reply) {
-			return nil, errors.New(reply)
-		}
-		h, _ := parseHandleReply(reply)
-		return &Conn{valid: true, real: true, handle: h, laddr: "", raddr: address}, nil
-	}
-	if !isNoBridge(err) {
+	if err != nil {
 		return nil, err
 	}
-	ln, ok := tcpBound[address]
-	if !ok || ln == nil || ln.closed {
-		return nil, errRefused
+	if isRealError(reply) {
+		return nil, errors.New(reply)
 	}
-	a, b := Pipe()
-	a.laddr = address
-	a.raddr = "pipe"
-	b.laddr = "pipe"
-	b.raddr = address
-	go enqueueTCP(ln, a)
-	return b, nil
-}
-
-func enqueueTCP(ln *Listener, c *Conn) {
-	if ln == nil || ln.closed {
-		c.Close()
-		return
-	}
-	ln.accept <- c
+	h, _ := parseHandleReply(reply)
+	return &Conn{valid: true, real: true, handle: h, laddr: "", raddr: address}, nil
 }
 
 type PacketConn struct {
@@ -309,13 +266,6 @@ func (c *PacketConn) Close() error {
 	if c.real {
 		gocvm.Call("net.io.close", c.handle)
 		return nil
-	}
-	if c.listen {
-		forgetUDP(c.laddr)
-		close(c.attach)
-		if c.conn == nil {
-			return nil
-		}
 	}
 	if c.conn == nil {
 		return nil
@@ -424,34 +374,19 @@ func PacketPipe() (*PacketConn, *PacketConn) {
 	return pa, pb
 }
 
-var udpBound = map[string]*PacketConn{}
-
-func forgetUDP(address string) {
-	udpBound[address] = nil
-}
-
 func ListenPacket(network string, address string) (*PacketConn, error) {
 	if network != "udp" && network != "udp4" && network != "udp6" {
 		return nil, errNotSupported
 	}
-	// net.listen does a real bind() and, for a UDP network, correctly
-	// skips the (TCP-only) listen() syscall (see real_win.cc's
-	// BindReal) -- a real UDP "listener" is just a bound socket, ready
-	// for ReadFrom/WriteTo below.
 	reply, err := gocvm.Call("net.listen", network+" "+address)
-	if err == nil {
-		if isRealError(reply) {
-			return nil, errors.New(reply)
-		}
-		h, _ := parseHandleReply(reply)
-		return &PacketConn{valid: true, real: true, handle: h, laddr: address}, nil
-	}
-	if !isNoBridge(err) {
+	if err != nil {
 		return nil, err
 	}
-	ln := &PacketConn{valid: true, listen: true, laddr: address, attach: make(chan *Conn, 1)}
-	udpBound[address] = ln
-	return ln, nil
+	if isRealError(reply) {
+		return nil, errors.New(reply)
+	}
+	h, _ := parseHandleReply(reply)
+	return &PacketConn{valid: true, real: true, handle: h, laddr: address}, nil
 }
 
 func DialPacket(network string, address string) (*PacketConn, error) {
@@ -459,35 +394,14 @@ func DialPacket(network string, address string) (*PacketConn, error) {
 		return nil, errNotSupported
 	}
 	reply, err := gocvm.Call("net.dial", network+" "+address)
-	if err == nil {
-		if isRealError(reply) {
-			return nil, errors.New(reply)
-		}
-		h, _ := parseHandleReply(reply)
-		return &PacketConn{valid: true, real: true, handle: h, laddr: "", raddr: address}, nil
-	}
-	if !isNoBridge(err) {
+	if err != nil {
 		return nil, err
 	}
-	ln, ok := udpBound[address]
-	if !ok || ln == nil || ln.closed {
-		return nil, errRefused
+	if isRealError(reply) {
+		return nil, errors.New(reply)
 	}
-	a, b := Pipe()
-	a.laddr = address
-	a.raddr = "pipe"
-	b.laddr = "pipe"
-	b.raddr = address
-	go enqueueUDP(ln, a)
-	return &PacketConn{valid: true, conn: b, laddr: "pipe", raddr: address}, nil
-}
-
-func enqueueUDP(ln *PacketConn, c *Conn) {
-	if ln == nil || ln.closed {
-		c.Close()
-		return
-	}
-	ln.attach <- c
+	h, _ := parseHandleReply(reply)
+	return &PacketConn{valid: true, real: true, handle: h, laddr: "", raddr: address}, nil
 }
 
 func SplitHostPort(hostport string) (string, string, error) {

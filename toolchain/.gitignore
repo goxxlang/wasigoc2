@@ -11,3 +11,4 @@ wasigocvm-toolchain.json
 *.wasm
 *.tar.gz
 *.log
+openssl-wasm/build/

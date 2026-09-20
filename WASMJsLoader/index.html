@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WASMJsLoader</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="hex">00 61 73 6d</span>
+      <h1>WASMJsLoader</h1>
+    </div>
+    <p class="tag">Occupancy Calls this hop. Instantiates compiled <code>.wasm</code> in the browser. Does not rewrite WASMWin32. <a href="cmd.html">GocOS Command Prompt</a> (xterm.js).</p>
+  </header>
+  <main>
+    <section class="col">
+      <h2>Load</h2>
+      <div id="drop" class="drop">
+        <p>Drop a <code>.wasm</code>, or</p>
+        <label class="btn">browse<input id="file" type="file" accept=".wasm,application/wasm" hidden /></label>
+      </div>
+      <p id="meta" class="hint">no module</p>
+    </section>
+    <section class="col">
+      <h2>Inspect</h2>
+      <pre id="inspect" class="panel">no module selected</pre>
+    </section>
+    <section class="col">
+      <h2>Run / call</h2>
+      <form id="go" class="call">
+        <label>export
+          <select id="fn"></select>
+        </label>
+        <label>args
+          <input id="args" type="text" placeholder="2 3" autocomplete="off" />
+        </label>
+        <button type="submit">invoke</button>
+      </form>
+      <pre id="out" class="panel log"></pre>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

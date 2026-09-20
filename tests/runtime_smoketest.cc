@@ -96,7 +96,7 @@ static std::string boom_local() {
 
 // -- gocvm::Call's ErrorState state machine (kClear/kBridgeActive/kPanic) --
 // No compiled Go++ source exercises the "no bridge"/"bridge panic"/
-// "reentrant" branches (compile.bat links no bridge at all, and the real
+// "reentrant" branches (legacy.bat links no bridge at all, and the real
 // shim_sandbox bridge never panics in practice), so this drives
 // gocvm::Call and its HostBridge/AbacHook contract directly.
 
@@ -161,7 +161,7 @@ static void gocvm_error_state() {
     auto r = gocvm::Call("some.topic", "x");
     assert(r.r0.empty());
     assert(r.r1 != nullptr);
-    assert(r.r1.str().find("no host bridge registered") != std::string::npos);
+    assert(r.r1.str().find("no gocvm machine registered") != std::string::npos);
     assert(g_error_state().is_clear());
   }
 

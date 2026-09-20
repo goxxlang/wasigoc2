@@ -1,5 +1,5 @@
 // Package http is HTTP/1.0 over net (Pipe on wasip1, real sockets on
-// wasigo-p2 / goclang++ --shim-sandbox).
+// wasigocvm / native leftover).
 package http
 
 import (
@@ -151,7 +151,7 @@ func writeResponse(c *net.Conn, resp *Response) {
 	c.Write([]byte(head + resp.Body))
 }
 
-func Serve(ln *net.Listener, body string) error {
+func Serve(ln *net.TCPListener, body string) error {
 	if ln == nil {
 		return nil
 	}
@@ -175,7 +175,24 @@ func serveOne(c *net.Conn, body string) {
 	c.Close()
 }
 
-func ServeHandler(ln *net.Listener, mux *ServeMux) error {
+func ReadRequest(c *net.Conn) (*Request, error) {
+	raw, err := readUntil(c, "\r\n\r\n")
+	body := ""
+	cl := headerValue(raw, "Content-Length")
+	if cl != "" {
+		n, aerr := strconv.Atoi(cl)
+		if aerr == nil && n > 0 {
+			body, _ = readN(c, n)
+		}
+	}
+	return parseRequest(raw, body), err
+}
+
+func WriteResponse(c *net.Conn, resp *Response) {
+	writeResponse(c, resp)
+}
+
+func ServeHandler(ln *net.TCPListener, mux *ServeMux) error {
 	if ln == nil {
 		return nil
 	}
@@ -189,16 +206,7 @@ func ServeHandler(ln *net.Listener, mux *ServeMux) error {
 }
 
 func serveMuxOne(c *net.Conn, mux *ServeMux) {
-	raw, _ := readUntil(c, "\r\n\r\n")
-	body := ""
-	cl := headerValue(raw, "Content-Length")
-	if cl != "" {
-		n, aerr := strconv.Atoi(cl)
-		if aerr == nil && n > 0 {
-			body, _ = readN(c, n)
-		}
-	}
-	req := parseRequest(raw, body)
+	req, _ := ReadRequest(c)
 	resp := &Response{Status: 200, ContentType: "text/plain"}
 	fn := mux.match(req.Path)
 	if fn == nil {
@@ -207,7 +215,7 @@ func serveMuxOne(c *net.Conn, mux *ServeMux) {
 	} else {
 		fn(req, resp)
 	}
-	writeResponse(c, resp)
+	WriteResponse(c, resp)
 	c.Close()
 }
 

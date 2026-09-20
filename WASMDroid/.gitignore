@@ -1,0 +1,8 @@
+/build/
+/build-wsl/
+/build-wasi/
+CMakeUserPresets.json
+*.obj
+*.exe
+*.a
+*.pdb

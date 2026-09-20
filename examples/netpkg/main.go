@@ -109,7 +109,7 @@ func main() {
 	}
 }
 
-func acceptOnce(ln *net.Listener, done chan bool) {
+func acceptOnce(ln *net.TCPListener, done chan bool) {
 	c, err := ln.Accept()
 	if err == nil {
 		buf := make([]byte, 2)

@@ -177,23 +177,8 @@ endif()
 
 find_program(WASIGO_WASMTIME NAMES wasmtime wasmtime.exe)
 
-# gocvm_host.exe: the sibling ~/shim_sandbox repo's companion native process
-# for WASIGOCVM_HOST_BRIDGE goldens (os.exec/os.user/syscall/tls.dial --
-# topics that categorically cannot run inside the wasm32 sandbox). Optional,
-# same "golden tests still run, just stop short" pattern as wasi-sdk above.
-find_program(WASIGO_GOCVM_HOST_EXE
-  NAMES gocvm_host gocvm_host.exe
-  PATHS "${CMAKE_CURRENT_SOURCE_DIR}/../shim_sandbox/build"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../shim_sandbox/build/Release"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../shim_sandbox/build/Debug"
-  NO_DEFAULT_PATH
-)
-find_program(WASIGO_POWERSHELL NAMES pwsh pwsh.exe powershell powershell.exe)
-if(WASIGO_GOCVM_HOST_EXE AND WASIGO_POWERSHELL)
-  message(STATUS "wasigo: gocvm_host at ${WASIGO_GOCVM_HOST_EXE}, driving *_hostbridge goldens with ${WASIGO_POWERSHELL}")
-else()
-  message(STATUS "wasigo: no gocvm_host.exe (build ~/shim_sandbox) or no powershell -- *_hostbridge goldens skipped")
-endif()
+# No companion gocvm_host: wasigocvm is in-module (libc + WASMSafeSpace).
+# Native goclang++ still links ~/gocvm_sandbox in-process.
 
 # ---- Golden tests ------------------------------------------------------------
 # Each one: wasigoc translates examples/<dir>/<name>.go, then (if wasi-sdk was
@@ -210,7 +195,7 @@ function(wasigo_add_golden name go_rel_path expected_output)
   add_custom_command(
     OUTPUT "${gen_cpp}"
     COMMAND wasigoc "${go_src}" -o "${gen_cpp}" --out-dir "${WASIGO_GEN_DIR}"
-    DEPENDS wasigoc "${go_src}" "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/wasigocvm_net.hpp" ${ARGN}
+    DEPENDS wasigoc "${go_src}" "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/wasigocvm_net.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/wasigocvm_tls.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/wasigocvm_exec.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/wasigocvm_aspace.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/wasigocvm_libc.hpp" ${ARGN}
     COMMENT "wasigoc: generating ${name}.cpp"
     VERBATIM
   )
@@ -291,37 +276,6 @@ function(wasigo_add_wasigocvm_golden name expected_output)
             ${_expected_file_arg}
             ${_wasi_s}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/run_golden.cmake"
-  )
-endfunction()
-
-# WASIGOCVM_HOST_BRIDGE golden: same generated C++ as wasigo_add_golden(name)
-# (that call must come first, to create the wasigo_generate_${name} target
-# this reads gen_cpp from), rebuilt with -DWASIGOCVM_HOST_BRIDGE=1 and run
-# against a real ~/shim_sandbox/gocvm_host.exe -- see
-# tests/golden/run_hostbridge_golden.ps1 for why this needs a PowerShell
-# driver instead of check_wasm.cmake's single static COMMAND (a companion
-# process has to be started between compiling and running the wasm, then
-# torn down after).
-function(wasigo_add_hostbridge_golden name)
-  if(NOT WASIGO_CLANGXX_P2 OR NOT WASIGO_WASMTIME OR NOT WASIGO_GOCVM_HOST_EXE OR NOT WASIGO_POWERSHELL)
-    return()
-  endif()
-  set(gen_cpp "${WASIGO_GEN_DIR}/${name}.cpp")
-  set(gen_wasm "${WASIGO_GEN_DIR}/${name}.hostbridge.wasm")
-  add_test(
-    NAME ${name}_hostbridge
-    COMMAND "${WASIGO_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
-            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/run_hostbridge_golden.ps1"
-            -Cmake "${CMAKE_COMMAND}"
-            -RunGoldenScript "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/run_golden.cmake"
-            -ClangXX "${WASIGO_CLANGXX_P2}"
-            -Sysroot "${WASIGO_GOCVM_SYSROOT}"
-            -IncludeDir "${WASIGO_GEN_DIR}"
-            -SrcDir "${CMAKE_CURRENT_SOURCE_DIR}/src"
-            -CppFile "${gen_cpp}"
-            -WasmFile "${gen_wasm}"
-            -Wasmtime "${WASIGO_WASMTIME}"
-            -HostExe "${WASIGO_GOCVM_HOST_EXE}"
   )
 endfunction()
 
@@ -448,7 +402,7 @@ wasigo_add_golden(urlpkg "urlpkg/main.go"
 wasigo_add_golden(jsonpkg "jsonpkg/main.go" ""
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/json/json.go")
 wasigo_add_golden(execpkg "execpkg/main.go"
-  "3\\ntrue\\nexec: not supported on wasm32-wasip1 (WASI preview 1 has no subprocess support)\\ntrue true\\ntrue\\n"
+  "3\\ntrue\\ngocvm: os.exec: no gocvm machine\\ntrue true\\ntrue\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/os/exec/exec.go")
 wasigo_add_golden(regexppkg "regexppkg/main.go"
   "true\\nfalse\\nfalse\\n123\\n2\\n123\\n456\\ntrue\\nfalse\\na b c d\\n4\\na\\nb\\nc \\nd\\ntrue\\ntrue\\nfalse\\ntrue\\nfalse\\ntrue\\ntrue \\n"
@@ -484,11 +438,11 @@ wasigo_add_golden(sha1pkg "sha1pkg/main.go"
 wasigo_add_golden(reflectpkg "reflectpkg/main.go"
   "true\\n3\\nX\\nY\\nName\\ntrue\\n3\\ntrue\\norigin\\nPoint\\ntrue\\ntrue\\n42\\ntrue\\nhello\\ntrue\\ntrue\\n")
 wasigo_add_golden(netpkg "netpkg/main.go"
-  "true\\ntrue\\nfalse\\nfalse\\ntrue\\ntrue\\ntrue\\n5\\ntrue\\nhello\\n6\\ntrue\\n world\\ntrue\\ntrue\\ntrue\\ntrue\\nhi\\ntrue\\nping\\n127.0.0.1\\n80\\n[::1]:443\\ntrue\\npong\\n"
+  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n5\\ntrue\\nhello\\n6\\ntrue\\n world\\ntrue\\ntrue\\ntrue\\nfalse\\n\\ntrue\\nping\\n127.0.0.1\\n80\\n[::1]:443\\nfalse\\n\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/net/net.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go")
 wasigo_add_golden(httppkg "httppkg/main.go"
-  "true\\n200\\nok\\n200\\nPOST /echo hi\\n404\\nnot found\\n"
+  "false\\n0\\n\\n0\\n\\n0\\n\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/net/http/http.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/net/net.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
@@ -571,6 +525,36 @@ wasigo_add_golden(htmlpkg "htmlpkg/main.go"
   "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/html/html.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go")
+# Clean-room Open Graph document channel. Occupancy for this hop lives
+# in ~/WASMWhatAppDoc; Electron hosts it later.
+wasigo_add_golden(ogchan "ogchan/main.go"
+  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/ogchan/ogchan.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/html/html.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go")
+wasigo_add_wasigocvm_golden(ogchan
+  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n")
+# Clean-room Electron process/IPC guest. Loads WASMLime + WASMv8Bindings
+# + WASMUniLoader via unil runtime components and gocvm topics; in-guest
+# fallback is cooperative main/renderer (Lime has no OS process split).
+wasigo_add_golden(electron "electron/main.go"
+  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n"
+  "${CMAKE_CURRENT_SOURCE_DIR}/examples/electronpkg/electron.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/unil/unil.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/ed25519/ed25519.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/sha512/sha512.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/sha256/sha256.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/rand/rand.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/base64/base64.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/hex/hex.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/json/json.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math/big/big.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/time/time.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go")
+wasigo_add_wasigocvm_golden(electron
+  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n")
 wasigo_add_golden(bigpkg "bigpkg/main.go"
   "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math/big/big.go"
@@ -946,30 +930,28 @@ wasigo_add_golden(structspkg "structspkg/main.go"
   "true\\ntrue\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/structs/structs.go")
 wasigo_add_golden(syscallpkg "syscallpkg/main.go"
-  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n"
+  "true\\ntrue\\nfalse\\nfalse\\ntrue\\ntrue\\ntrue\\ntrue\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/syscall/syscall.go")
-# hostbridge: syscall.Getpid() through gocvm.Call. Plain wasip1/wasigocvm
-# builds have no bridge at all, so they get the documented canned fallback
-# (1); wasigo_add_hostbridge_golden(hostbridge) below is the real assertion
-# -- it rebuilds with -DWASIGOCVM_HOST_BRIDGE=1 and checks the guest got
-# back a real, live gocvm_host.exe pid, not the fallback.
-wasigo_add_golden(hostbridge "hostbridge/main.go" "1\\n"
+# getpid: no machine reports 1; wasigocvm is the occupancy table (first
+# guest pid 1000), not WASI emulated getpid.
+wasigo_add_golden(getpid "getpid/main.go" "1\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/syscall/syscall.go")
-wasigo_add_wasigocvm_golden(hostbridge "1\\n")
-wasigo_add_hostbridge_golden(hostbridge)
-wasigo_add_golden(unilpkg "unilpkg/main.go"
-  "unil-sandbox\\nsandbox\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\nverify ok\\nroundtrip verify ok\\ntrue\\nverifybytes ok\\ntamper rejected\\ntrue\\n"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/unil/unil.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/ed25519/ed25519.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/sha512/sha512.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/sha256/sha256.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/rand/rand.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/base64/base64.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/hex/hex.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/json/json.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math/big/big.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go"
-  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/time/time.go")
+wasigo_add_wasigocvm_golden(getpid "1000\\n")
+wasigo_add_golden(linuxpkg "linuxpkg/main.go" "false\\nfalse\\nfalse\\nfalse\\n"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/linux/linux.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go")
+wasigo_add_wasigocvm_golden(linuxpkg "true\\ntrue\\ntrue\\ntrue\\n")
+wasigo_add_golden(droidpkg "droidpkg/main.go" "false\\nfalse\\nfalse\\nfalse\\n"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/android/android.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go")
+wasigo_add_wasigocvm_golden(droidpkg "true\\ntrue\\ntrue\\ntrue\\n")
+wasigo_add_golden(gocospkg "gocospkg/main.go" "false\\nfalse\\nfalse\\nfalse\\n"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/gocos/gocos.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go")
+wasigo_add_wasigocvm_golden(gocospkg "true\\ntrue\\ntrue\\ntrue\\n")
 wasigo_add_golden(guacpkg "guacpkg/main.go"
   "package\\nguacpkg-demo\\n0.1.0\\nwasm32-wasip1\\ntrue\\ntrue\\ntrue\\nverify ok\\ntamper rejected\\nsignature verify ok\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/guac/guac.go"

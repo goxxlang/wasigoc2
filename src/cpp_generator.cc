@@ -452,21 +452,23 @@ class Generator {
     }
 
     EmitNsOpen();
-    EmitAliases();
-    // Struct forward decls before interface defs, not after: an
-    // interface method whose signature uses a plain STRUCT type (not a
-    // pointer, not a builtin) -- e.g. `Bounds() Rectangle` in image.Image
-    // -- needs `Rectangle` at least forward-declared for the VTable's
-    // function-pointer member (`Rectangle (*Bounds)(void*);`) to parse at
-    // all; getting this backwards read as "expected identifier before
-    // '*' token", since `Rectangle` wasn't ANY recognized name yet.
-    // Every earlier interface tested only used builtin types or OTHER
-    // interfaces in its methods (hash.Hash, cipher.Block, color.Model),
-    // never a plain struct -- found building image.Image. A forward
-    // declaration is all EmitInterfaceDefs needs (it only ever uses the
-    // type as a return/parameter type, never requires a complete type),
-    // so simply reordering these two calls is sufficient.
+    // Struct forward decls before aliases and interface defs: a true
+    // alias (`type TCPConn = Conn`) becomes `using TCPConn = Conn;`,
+    // which needs Conn at least declared. Same for an interface method
+    // whose signature uses a plain STRUCT type (not a pointer, not a
+    // builtin) -- e.g. `Bounds() Rectangle` in image.Image -- the
+    // VTable's function-pointer member (`Rectangle (*Bounds)(void*);`)
+    // must parse. Getting this backwards read as "expected identifier
+    // before '*' token" (Rectangle) or "'Conn' does not name a type"
+    // (TCPConn). Every earlier interface tested only used builtin types
+    // or OTHER interfaces in its methods (hash.Hash, cipher.Block,
+    // color.Model), never a plain struct -- found building image.Image.
+    // TCPConn was the first same-package `type T = Struct`. A forward
+    // declaration is all EmitAliases / EmitInterfaceDefs need (they
+    // only use the type as a name, never a complete type), so simply
+    // reordering these calls is sufficient.
     EmitStructForwardDecls();
+    EmitAliases();
     EmitInterfaceDefs();
     EmitFreeFuncPrototypes();
     // Struct field-only skeletons before result-struct defs, not after: a

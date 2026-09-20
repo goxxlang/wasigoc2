@@ -1,0 +1,7 @@
+/wasmloader.exe
+/wasmloader
+/bin/
+*.exe
+*.test
+.idea/
+.vscode/

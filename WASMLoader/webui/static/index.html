@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WASM Loader</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="hex">00 61 73 6d</span>
+      <h1>WASM Loader</h1>
+    </div>
+    <p class="tag">Load compiled <code>.wasm</code>. Link later modules against earlier ones.</p>
+  </header>
+
+  <main>
+    <section class="col">
+      <h2>Modules</h2>
+      <div id="drop" class="drop">
+        <p>Drop <code>.wasm</code> files here, or</p>
+        <label class="btn">browse<input id="file" type="file" accept=".wasm,application/wasm" multiple hidden /></label>
+      </div>
+      <div class="demos">
+        <span>demos</span>
+        <button type="button" data-demo="add">add</button>
+        <button type="button" data-demo="double">double</button>
+        <button type="button" data-demo="hello">hello</button>
+        <button type="button" data-demo="plugin">plugin</button>
+      </div>
+      <ol id="list" class="list"></ol>
+      <p class="hint">Load <code>add</code> as <code>math</code>, then <code>double</code> as <code>app</code>. Double imports <code>math.add</code>.</p>
+    </section>
+
+    <section class="col">
+      <h2>Inspect</h2>
+      <pre id="inspect" class="panel">no module selected</pre>
+    </section>
+
+    <section class="col">
+      <h2>Call</h2>
+      <form id="call" class="call">
+        <label>module
+          <select id="mod"></select>
+        </label>
+        <label>export
+          <select id="fn"></select>
+        </label>
+        <label>args
+          <input id="args" type="text" placeholder="2 3" autocomplete="off" />
+        </label>
+        <button type="submit">invoke</button>
+      </form>
+      <pre id="out" class="panel log"></pre>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

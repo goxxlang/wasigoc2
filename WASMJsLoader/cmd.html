@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GocOS Command Prompt</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" crossorigin="anonymous" />
+  <style>
+    html, body { margin: 0; height: 100%; background: #0c0c0c; color: #ccc; font: 12px/1.4 "Segoe UI", sans-serif; }
+    .chrome { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: #1e1e1e; border-bottom: 1px solid #333; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #3e3e3e; }
+    .title { color: #fff; }
+    .hint { margin-left: auto; color: #888; }
+    #term { height: calc(100% - 32px); padding: 8px; }
+  </style>
+</head>
+<body>
+  <div class="chrome">
+    <span class="dot"></span>
+    <span class="title">Command Prompt — GocOS (wasigocvm)</span>
+    <span class="hint">WASMJsLoader · no host bridge</span>
+  </div>
+  <div id="term"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" crossorigin="anonymous"></script>
+  <script type="module" src="cmd.js"></script>
+</body>
+</html>

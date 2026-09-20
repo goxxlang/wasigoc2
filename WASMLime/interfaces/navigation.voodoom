@@ -1,0 +1,35 @@
+// Modeled on the real fuchsia.web navigation.fidl surface (NavigationState,
+// NavigationEventListener, NavigationController) -- LoadUrl backs onto
+// blink::LocalFrame::Navigate (real parse/layout/paint, whatever backs it),
+// so this is a real navigation ledger driving a real frame, not a stand-in.
+module lime;
+
+enum PageType {
+  NORMAL,
+  ERROR_PAGE,
+};
+
+struct NavigationState {
+  string url;
+  string title;
+  PageType page_type;
+  bool can_go_back;
+  bool can_go_forward;
+  bool is_main_document_loaded;
+};
+
+interface NavigationEventListener {
+  // Real Mojo doesn't yet have flow-control response-blocking (that's a
+  // NavigationControllerImpl-side discipline -- see WASMLime's frame_impl):
+  // callers must ack before the next notification is sent.
+  OnNavigationStateChanged(NavigationState change) => ();
+};
+
+interface NavigationController {
+  LoadUrl(string url) => (bool ok, string error);
+  GoBack();
+  GoForward();
+  Stop();
+  Reload();
+  GetVisibleEntry() => (NavigationState entry);
+};

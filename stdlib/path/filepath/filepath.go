@@ -2,7 +2,11 @@
 // separators; paths are slash-separated the same as package path.
 package filepath
 
-import "errors"
+import (
+	"errors"
+	"gocvm"
+	"strings"
+)
 
 func Base(name string) string {
 	if name == "" {
@@ -87,6 +91,23 @@ func FromSlash(path string) string {
 
 func IsAbs(path string) bool {
 	return len(path) > 0 && path[0:1] == "/"
+}
+
+func Abs(path string) (string, error) {
+	if IsAbs(path) {
+		return Clean(path), nil
+	}
+	reply, err := gocvm.Call("win32", "GetFullPathNameW\x1f"+path)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(reply, "error:") {
+		return "", errors.New(reply)
+	}
+	if reply == "" {
+		return "", errors.New("filepath: empty path")
+	}
+	return Clean(reply), nil
 }
 
 func Split(path string) (string, string) {

@@ -1,11 +1,6 @@
-// Package tls: real on a goclang++.bat --shim-sandbox build (a real
-// Schannel/SSPI handshake, automatic certificate chain + hostname
-// validation always on -- see shim_sandbox's src/sapi/tls_win.cc --
-// via gocvm.Call, runtime.hpp's wasigo::gocvm). Under plain
-// wasm32-wasip1 (compile.bat), gocvm.Call itself reports no host
-// bridge and every operation returns the same honest "not supported"
-// error as before. LoadX509KeyPair (client certificates) stays
-// stubbed -- out of scope, no ordinary HTTPS client needs it.
+// Package tls: OpenSSL 3 wasm, memory BIOs, same shape as WASMLime
+// TlsTransport (SSL_do_handshake + SNI). Not Schannel. gocvm.Call
+// stays in-module. LoadX509KeyPair (client certificates) stays stubbed.
 package tls
 
 import (
@@ -15,26 +10,10 @@ import (
 	"strings"
 )
 
-var ErrNotSupported = errors.New(
-	"tls: not supported on wasm32-wasip1 (needs sockets and x509 chain verification)")
+var errNotConnected = errors.New("tls: not connected")
 
-// gocvm.Call's (string, error): err is only non-nil when there is no
-// real answer at all (no bridge). A real bridge's own failure (a real
-// handshake or certificate validation failure, a real connect error)
-// still comes back err == nil with the payload starting "error: " -- a
-// definitive real answer, not a signal to fall back to ErrNotSupported.
 func isRealError(reply string) bool {
 	return strings.HasPrefix(reply, "error:")
-}
-
-// isNoBridge distinguishes "this build has no bridge at all" (the only
-// case that should fall back to ErrNotSupported) from every other
-// err != nil gocvm.Call can return on a real --shim-sandbox build (ABAC
-// deny, a bridge-internal panic, a reentrant call) -- those are genuine
-// operational failures and must surface as-is, not get misreported as a
-// platform limitation.
-func isNoBridge(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no host bridge registered")
 }
 
 type Config struct {
@@ -48,7 +27,7 @@ type Conn struct {
 	handle string
 }
 
-// "ok handle=<id>" -- real_win.cc's TlsDial reply shape.
+// "ok handle=<id>" -- tls.dial reply.
 func parseDialHandle(reply string) string {
 	const p = "handle="
 	i := strings.Index(reply, p)
@@ -62,11 +41,12 @@ func parseDialHandle(reply string) string {
 // as real Go's tls.Dial) -- Handshake() below is a no-op once Dial has
 // succeeded.
 func Dial(network string, addr string, config *Config) (*Conn, error) {
-	reply, err := gocvm.Call("tls.dial", addr)
+	payload := addr
+	if config != nil && config.ServerName != "" {
+		payload = addr + "\x1f" + config.ServerName
+	}
+	reply, err := gocvm.Call("tls.dial", payload)
 	if err != nil {
-		if isNoBridge(err) {
-			return nil, ErrNotSupported
-		}
 		return nil, err
 	}
 	if isRealError(reply) {
@@ -81,16 +61,13 @@ func Dial(network string, addr string, config *Config) (*Conn, error) {
 
 func (c *Conn) Read(p []byte) (int, error) {
 	if c == nil || !c.valid || !c.real {
-		return 0, ErrNotSupported
+		return 0, errNotConnected
 	}
 	if c.closed {
 		return 0, errors.New("tls: connection closed")
 	}
 	reply, err := gocvm.Call("tls.io.read", c.handle+"\x1f"+strconv.Itoa(len(p)))
 	if err != nil {
-		if isNoBridge(err) {
-			return 0, ErrNotSupported
-		}
 		return 0, err
 	}
 	if isRealError(reply) {
@@ -105,16 +82,13 @@ func (c *Conn) Read(p []byte) (int, error) {
 
 func (c *Conn) Write(p []byte) (int, error) {
 	if c == nil || !c.valid || !c.real {
-		return 0, ErrNotSupported
+		return 0, errNotConnected
 	}
 	if c.closed {
 		return 0, errors.New("tls: connection closed")
 	}
 	reply, err := gocvm.Call("tls.io.write", c.handle+"\x1f"+string(p))
 	if err != nil {
-		if isNoBridge(err) {
-			return 0, ErrNotSupported
-		}
 		return 0, err
 	}
 	if isRealError(reply) {
@@ -127,14 +101,14 @@ func (c *Conn) Write(p []byte) (int, error) {
 // it (matches real Go: tls.Dial already returns a handshaken Conn).
 func (c *Conn) Handshake() error {
 	if c == nil || !c.valid || !c.real {
-		return ErrNotSupported
+		return errNotConnected
 	}
 	return nil
 }
 
 func (c *Conn) Close() error {
 	if c == nil || !c.valid {
-		return ErrNotSupported
+		return errNotConnected
 	}
 	if c.closed {
 		return nil
@@ -147,5 +121,5 @@ func (c *Conn) Close() error {
 }
 
 func LoadX509KeyPair(certFile string, keyFile string) error {
-	return ErrNotSupported
+	return errors.New("tls: LoadX509KeyPair not implemented")
 }

@@ -1,7 +1,8 @@
 # Build and wasm
 
 `wasigoc` is a **host** tool (MSVC or clang on the machine). It never
-runs as a WASI module. Its *output* targets `wasm32-wasip1`.
+runs as a WASI module. Default wasm compile is `compile.bat` (wasigocvm).
+Stock `wasm32-wasip1` noeh leftover is `legacy.bat`.
 
 ## Build wasigoc
 
@@ -47,10 +48,13 @@ can `Open`/`Create`. Expected output that contains literal `\n` / `\t` /
 `"` (JSON, scanners) lives in `tests/golden/expected/<name>.txt` instead
 of the inline `EXPECTED_OUTPUT` string.
 
-## Compile a program to wasm
+## Compile a program to wasm (stock wasip1 leftover)
+
+`legacy.bat` is the stock wasi-sdk noeh path. Product compile is
+wasigocvm (`compile.bat`) below.
 
 ```
-wasigoc examples/hello/hello.go -o hello_gen.cpp
+legacy.bat examples\hello\hello.go -o hello.wasm
 ```
 
 Do **not** use `clang++ --target=wasm32-wasip1` alone. On wasi-sdk 34
@@ -96,15 +100,17 @@ A program that uses `go` / `chan` / `select` gets
 
 ## Compile with wasigocvm (full libc++)
 
-Own target: **eh libc++**, RTTI, Oilpan + type_key, gocvm sockets.
-Not stock wasip2 flag-tuning. Driver and sysroot:
+Default `compile.bat` path. Own machine: **sysroot**, in-guest **libc**,
+**wasitime**. Full libc++, RTTI, Oilpan + type_key, gocvm sockets. Not
+stock wasip2 flag-tuning. [architecture.md](architecture.md),
 [wasigocvm.md](wasigocvm.md), [toolchain/README.md](../toolchain/README.md).
 
 ```
-wasigocvm.bat examples\httppkg\main.go -o httppkg.wasm
-..\shim_sandbox\tools\w2g-run.bat httppkg.wasm
+compile.bat examples\httppkg\main.go -o httppkg.wasm
+wasitime httppkg.wasm
 ```
 
+`wasigocvm.bat` is the same machine. `legacy.bat` is stock wasip1 noeh.
 ctest: `*_wasigocvm` (`WASIGO_CXXLIB=full`, `-DWASIGO_GOCVM=1`).
 `compile.bat --wasip2` is retired.
 
@@ -150,8 +156,8 @@ reason left to keep this opt-in (see design-log.md's GocVM diary).
 `goclang++.bat` looks for shim_sandbox at `%SHIM_SANDBOX_DIR%` or the
 sibling `../shim_sandbox`; if it's missing or not yet built
 (`cmake -B build && cmake --build build` there), the build silently
-falls back to no bridge at all (`gocvm.Call` reports "no host bridge
-registered", same as always) rather than failing. Pass `--shim-sandbox`
+falls back to no machine at all (`gocvm.Call` reports "no gocvm machine
+registered", same as stock wasip1) rather than failing. Pass `--shim-sandbox`
 explicitly to turn a missing/unbuilt shim_sandbox into a hard error
 instead (useful in CI, where a silent fallback would be the wrong
 failure mode); `--no-shim-sandbox` skips the bridge entirely;

@@ -1,0 +1,16 @@
+// Modeled on the real fuchsia.web.ContextProvider surface. Real Fuchsia's
+// Create() spawns a fresh sandboxed OS process per Context; nothing in this
+// stack spawns processes, so ContextProviderImpl constructs an in-process
+// ContextImpl instead -- see WASMLime's README Known Simplifications.
+module lime;
+
+import "context.voodoom";
+
+struct CreateContextParams {
+  array<string> cors_exempt_headers;
+  uint16 remote_debugging_port;
+};
+
+interface ContextProvider {
+  Create(CreateContextParams params, pending_associated_receiver<Context> context);
+};

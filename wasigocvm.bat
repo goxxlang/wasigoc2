@@ -1,25 +1,25 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+set "WASIGO_ROOT=%CD%"
 
-rem wasigocvm — Go++ -> C++ -> wasm using OUR toolchain contract.
-rem Product define: -DWASIGO_GOCVM=1. Prefers toolchain\ over stock wasi-sdk.
+rem wasigocvm - Go++ -> C++ -> wasm using OUR toolchain contract.
+rem Product define: -DWASIGO_GOCVM=1. compile.bat is the default driver
+rem (this file is the same machine). Stock wasip1 leftover: legacy.bat.
 rem
-rem   wasigocvm.bat examples\httppkg\main.go
+rem   compile.bat examples\httppkg\main.go
 rem   wasigocvm.bat hello.go -o out.wasm
 
 set "CONFIG=Release"
 set "GOFILE="
 set "OUTWASM="
 set "WASIGOC_EXTRA="
-set "HOSTBRIDGE="
 
 :parse
 if "%~1"=="" goto :parsed
 if /I "%~1"=="-h" goto :usage
 if /I "%~1"=="--help" goto :usage
 if /I "%~1"=="/?" goto :usage
-if /I "%~1"=="--host-bridge" (set "HOSTBRIDGE=1" & shift & goto :parse)
 if /I "%~1"=="-o" (
   if "%~2"=="" (echo error: -o requires a path & exit /b 2)
   set "OUTWASM=%~2"
@@ -39,7 +39,7 @@ goto :parse
 call :find_wasigoc
 if not defined WASIGOC_EXE (
   echo building wasigoc...
-  call compile.bat %CONFIG%
+  call "%~dp0legacy.bat" %CONFIG%
   if errorlevel 1 exit /b 1
   call :find_wasigoc
 )
@@ -66,7 +66,7 @@ if errorlevel 1 exit /b 1
 
 call :find_toolchain
 if not defined WASIGO_CLANG (
-  echo error: no wasigocvm clang — set WASIGO_TOOLCHAIN or run toolchain\bootstrap.ps1
+  echo error: no wasigocvm clang - set WASIGO_TOOLCHAIN or run toolchain\bootstrap.ps1
   echo          ^(fallback: %%USERPROFILE%%\wasi-sdk with eh/^)
   exit /b 1
 )
@@ -81,12 +81,179 @@ if not defined WASIGO_TRIPLE (
 set "EH_INC=%WASIGO_SYSROOT%\include\%WASIGO_TRIPLE%\eh\c++\v1"
 set "EH_LIB=%WASIGO_SYSROOT%\lib\%WASIGO_TRIPLE%\eh"
 
-set "HOSTBRIDGE_DEFINE="
-if defined HOSTBRIDGE set "HOSTBRIDGE_DEFINE=-DWASIGOCVM_HOST_BRIDGE=1"
+rem Threads: stamp threads:true + libpthread (prefer this triple so sockets stay).
+set "WASIGO_THREADS="
+set "WASIGO_PTHREAD_FLAGS="
+set "STAMP=%~dp0toolchain\wasigocvm-toolchain.json"
+if defined WASIGO_SDK_ROOT if exist "%WASIGO_SDK_ROOT%\wasigocvm-toolchain.json" set "STAMP=%WASIGO_SDK_ROOT%\wasigocvm-toolchain.json"
+if exist "%STAMP%" (
+  findstr /R /C:"threads.:.*true" "%STAMP%" >nul 2>&1 && set "WASIGO_THREADS=1"
+)
+if defined WASIGO_THREADS (
+  set "PTHREAD_LIBDIR="
+  if exist "%WASIGO_SYSROOT%\lib\%WASIGO_TRIPLE%\libpthread.a" set "PTHREAD_LIBDIR=%WASIGO_SYSROOT%\lib\%WASIGO_TRIPLE%"
+  if not defined PTHREAD_LIBDIR if exist "%USERPROFILE%\wasi-sdk\share\wasi-sysroot\lib\%WASIGO_TRIPLE%\libpthread.a" set "PTHREAD_LIBDIR=%USERPROFILE%\wasi-sdk\share\wasi-sysroot\lib\%WASIGO_TRIPLE%"
+  if not defined PTHREAD_LIBDIR if exist "%WASIGO_SYSROOT%\lib\wasm32-wasip1-threads\libpthread.a" set "PTHREAD_LIBDIR=%WASIGO_SYSROOT%\lib\wasm32-wasip1-threads"
+  if defined PTHREAD_LIBDIR (
+    rem WASMSafeSpace: wasm32 linear memory already is the process boundary.
+    rem Do not pass --shared-memory (eh libc++ was not built with atomics;
+    rem TLS errno disagrees with wasip2 libc). Child working set lives in
+    rem ~/WASMSafeSpace Sandbox (heap cage). -D_REENTRANT without -pthread
+    rem so errno stays non-TLS. std::thread still links -lpthread.
+    set WASIGO_PTHREAD_FLAGS=-D_REENTRANT -L "%PTHREAD_LIBDIR%" -lpthread
+  ) else (
+    echo warning: stamp threads:true but libpthread.a missing - building without -pthread
+    set "WASIGO_THREADS="
+    set "WASIGO_PTHREAD_FLAGS="
+  )
+)
+
 
 echo [wasigocvm] %WASIGO_CLANG%
 echo             triple=%WASIGO_TRIPLE%  full libc++ + rtti + standard wasm EH
-if defined HOSTBRIDGE echo             --host-bridge: os.exec/os.user/syscall/tls.dial forward to a companion gocvm_host process
+if defined WASIGO_THREADS echo             threads=on  (std::thread fork, WASMSafeSpace cage, no wasm shared-memory)
+rem Resolve <go++>/src even if %~dp0 is toolchain\ (hardlink / odd invoke)
+set "WASIGO_SRC_INC="
+if exist "%~dp0src\wasigocvm_config.hpp" set "WASIGO_SRC_INC=%~dp0src"
+if not defined WASIGO_SRC_INC if exist "%~dp0..\src\wasigocvm_config.hpp" for %%I in ("%~dp0..\src") do set "WASIGO_SRC_INC=%%~fI"
+if not defined WASIGO_SRC_INC set "WASIGO_SRC_INC=C:\Users\grego\go++\src"
+echo             -I "%GO_DIR%" -I "%WASIGO_SRC_INC%"
+set "WASIGO_PE="
+if exist "%WASIGO_ROOT%\WASMPELoader\include\wasmpe\loader.hpp" set "WASIGO_PE=%WASIGO_ROOT%\WASMPELoader"
+if not defined WASIGO_PE if exist "%USERPROFILE%\WASMPELoader\include\wasmpe\loader.hpp" set "WASIGO_PE=%USERPROFILE%\WASMPELoader"
+if not defined WASIGO_PE if exist "%WASIGO_ROOT%\..\WASMPELoader\include\wasmpe\loader.hpp" for %%I in ("%WASIGO_ROOT%\..\WASMPELoader") do set "WASIGO_PE=%%~fI"
+set "WASIGO_PE_I="
+if defined WASIGO_PE (
+  set WASIGO_PE_I=-I "!WASIGO_PE!\include"
+  echo             -I "!WASIGO_PE!\include" ^(WASMPELoader^)
+)
+if exist "%WASIGO_ROOT%\WASMWin32\include\win32\wasi_host.hpp" set "WASIGO_WIN32=%WASIGO_ROOT%\WASMWin32"
+if not defined WASIGO_WIN32 (
+  echo error: wasigocvm requires WASMWin32\ in this repo ^(win32/wasi_host.hpp^)
+  exit /b 2
+)
+set "WASIGO_WIN32_I="
+set "WASIGO_WIN32_CC="
+if defined WASIGO_WIN32 (
+  set WASIGO_WIN32_I=-I "!WASIGO_WIN32!\include"
+  echo             -I "!WASIGO_WIN32!\include" ^(WASMWin32 libc host^)
+  if exist "!WASIGO_WIN32!\src\catalog.cc" (
+    set WASIGO_WIN32_CC="!WASIGO_WIN32!\src\catalog.cc"
+    echo             WASMWin32 catalog on EPT ^(TPT process/thread, CHPT session^)
+  )
+  if exist "!WASIGO_WIN32!\src\host_wasi.cc" (
+    set WASIGO_WIN32_CC=!WASIGO_WIN32_CC! "!WASIGO_WIN32!\src\host_wasi.cc"
+    echo             WASMWin32 wasmwin32_call ^(occupyCalc CreateProcessW^)
+  )
+)
+if exist "%WASIGO_ROOT%\WASMNix\include\nix\posix_host.hpp" set "WASIGO_NIX=%WASIGO_ROOT%\WASMNix"
+if not defined WASIGO_NIX (
+  echo error: wasigocvm requires WASMNix\ in this repo ^(nix/posix_host.hpp^)
+  exit /b 2
+)
+set "WASIGO_NIX_I="
+set "WASIGO_NIX_CC="
+if defined WASIGO_NIX (
+  set WASIGO_NIX_I=-I "!WASIGO_NIX!\include"
+  echo             -I "!WASIGO_NIX!\include" ^(WASMNix libc host^)
+  if exist "!WASIGO_NIX!\src\catalog.cc" (
+    set WASIGO_NIX_CC="!WASIGO_NIX!\src\catalog.cc"
+    echo             WASMNix catalog on EPT ^(CHPT session^)
+  )
+)
+if exist "%WASIGO_ROOT%\WASMDroid\include\droid\bionic_host.hpp" set "WASIGO_DROID=%WASIGO_ROOT%\WASMDroid"
+if not defined WASIGO_DROID (
+  echo error: wasigocvm requires WASMDroid\ in this repo ^(droid/bionic_host.hpp^)
+  exit /b 2
+)
+set "WASIGO_DROID_I="
+set "WASIGO_DROID_CC="
+if defined WASIGO_DROID (
+  set WASIGO_DROID_I=-I "!WASIGO_DROID!\include"
+  echo             -I "!WASIGO_DROID!\include" ^(WASMDroid libc host^)
+  if exist "!WASIGO_DROID!\src\catalog.cc" (
+    set WASIGO_DROID_CC="!WASIGO_DROID!\src\catalog.cc"
+    echo             WASMDroid catalog on EPT ^(CHPT session, Binder root^)
+  )
+)
+if exist "%WASIGO_ROOT%\WASMGocOS\include\gocos\host.hpp" set "WASIGO_GOCOS=%WASIGO_ROOT%\WASMGocOS"
+if not defined WASIGO_GOCOS (
+  echo error: wasigocvm requires WASMGocOS\ in this repo ^(gocos/host.hpp^)
+  exit /b 2
+)
+set "WASIGO_GOCOS_I="
+set "WASIGO_GOCOS_CC="
+if defined WASIGO_GOCOS (
+  set WASIGO_GOCOS_I=-I "!WASIGO_GOCOS!\include"
+  echo             -I "!WASIGO_GOCOS!\include" ^(WASMGocOS edge kernel^)
+  if exist "!WASIGO_GOCOS!\src\catalog.cc" (
+    set WASIGO_GOCOS_CC="!WASIGO_GOCOS!\src\catalog.cc"
+    echo             WASMGocOS catalog on EPT ^(CHPT session, GocDesk^)
+  )
+)
+set "WASIGO_WOW="
+if exist "%WASIGO_ROOT%\WSMOccpuyWin32\include\wow\occupancy.h" set "WASIGO_WOW=%WASIGO_ROOT%\WSMOccpuyWin32"
+if not defined WASIGO_WOW if exist "%USERPROFILE%\WSMOccpuyWin32\include\wow\occupancy.h" set "WASIGO_WOW=%USERPROFILE%\WSMOccpuyWin32"
+if not defined WASIGO_WOW if exist "%USERPROFILE%\WSMOccupyWin32\include\wow\occupancy.h" set "WASIGO_WOW=%USERPROFILE%\WSMOccupyWin32"
+if not defined WASIGO_WOW if exist "%WASIGO_ROOT%\..\WSMOccpuyWin32\include\wow\occupancy.h" for %%I in ("%WASIGO_ROOT%\..\WSMOccpuyWin32") do set "WASIGO_WOW=%%~fI"
+set "WASIGO_WOW_I="
+set "WASIGO_WOW_CC="
+set "WASIGO_WOW_D="
+if defined WASIGO_WOW (
+  set WASIGO_WOW_I=-I "!WASIGO_WOW!\include"
+  set WASIGO_WOW_D=-DWOW_HAS_WIN32=1 -DWOW_HAS_GOCVM=1 -DWASIGO_GOCVM_BRIDGE=1
+  set WASIGO_WOW_CC="!WASIGO_WOW!\src\catalog\catalog.cc" "!WASIGO_WOW!\src\surface\surface.cc" "!WASIGO_WOW!\src\store\store.cc" "!WASIGO_WOW!\src\event\event.cc" "!WASIGO_WOW!\src\occupancy\occupancy.cc" "!WASIGO_WOW!\src\ipc\ipc.cc" "!WASIGO_WOW!\src\harness\harness.cc" "!WASIGO_WOW!\src\gocvm\bridge.cc" "!WASIGO_WOW!\src\gocvm\install.cc" "!WASIGO_WOW!\src\c\system.cc" "!WASIGO_WOW!\src\driver\driver.cc" "!WASIGO_WOW!\src\posix\posix.cc" "!WASIGO_WOW!\src\tty\tty.cc"
+  echo             -I "!WASIGO_WOW!\include" ^(WSMOccpuyWin32 occupyCmd / CreateProcessW^)
+)
+set "WASIGO_SAFE="
+if exist "%WASIGO_ROOT%\WASMSafeSpace\src\sandbox\sandbox.cc" set "WASIGO_SAFE=%WASIGO_ROOT%\WASMSafeSpace"
+if not defined WASIGO_SAFE (
+  echo error: wasigocvm requires WASMSafeSpace\ in this repo ^(sandbox.cc^)
+  exit /b 2
+)
+set "WASIGO_SAFE_I="
+set "WASIGO_SAFE_CC="
+if defined WASIGO_SAFE (
+  set WASIGO_SAFE_I=-I "!WASIGO_SAFE!\include" -I "!WASIGO_SAFE!"
+  set WASIGO_SAFE_CC="!WASIGO_SAFE!\src\sandbox\sandbox.cc" "!WASIGO_SAFE!\src\sandbox\external-pointer-table.cc" "!WASIGO_SAFE!\src\sandbox\trusted-pointer-table.cc"
+  echo             WASMSafeSpace EPT/TPT ^(exec second address space^)
+)
+set "WASIGO_V8="
+if exist "%WASIGO_ROOT%\WASMv8bindings\include\cppgc\heap.h" set "WASIGO_V8=%WASIGO_ROOT%\WASMv8bindings"
+if not defined WASIGO_V8 (
+  echo error: wasigocvm requires WASMv8bindings\ in this repo ^(cppgc/heap.h^)
+  exit /b 2
+)
+set "WASIGO_V8_I="
+set "WASIGO_V8_CC="
+if defined WASIGO_V8 (
+  set WASIGO_V8_I=-I "!WASIGO_V8!\include" -I "!WASIGO_V8!"
+  set WASIGO_V8_CC="!WASIGO_V8!\src\heap\internal\cppgc-logging.cc" "!WASIGO_V8!\src\heap\internal\free-list.cc" "!WASIGO_V8!\src\heap\internal\gc-info.cc" "!WASIGO_V8!\src\heap\internal\gc-info-table.cc" "!WASIGO_V8!\src\heap\internal\heap.cc" "!WASIGO_V8!\src\heap\internal\platform.cc" "!WASIGO_V8!\src\sandbox\cppheap-pointer-table.cc"
+  echo             WASMv8bindings CHPT ^(exec second address space^)
+)
+set "WASIGO_SSL_I="
+set "WASIGO_SSL_L="
+set "WASIGO_SSL_D="
+set "WASIGO_SSL_INC="
+set "WASIGO_SSL_LIB="
+if exist "%WASIGO_ROOT%\toolchain\openssl-wasm\lib\libssl.a" (
+  if exist "%WASIGO_ROOT%\toolchain\openssl-wasm\include\openssl\ssl.h" (
+    set "WASIGO_SSL_INC=%WASIGO_ROOT%\toolchain\openssl-wasm\include"
+    set "WASIGO_SSL_LIB=%WASIGO_ROOT%\toolchain\openssl-wasm\lib"
+  )
+)
+if not defined WASIGO_SSL_INC if exist "%WASIGO_SYSROOT%\include\openssl\ssl.h" (
+  if exist "%WASIGO_SYSROOT%\lib\%WASIGO_TRIPLE%\libssl.a" (
+    set "WASIGO_SSL_INC=%WASIGO_SYSROOT%\include"
+    set "WASIGO_SSL_LIB=%WASIGO_SYSROOT%\lib\%WASIGO_TRIPLE%"
+  )
+)
+if defined WASIGO_SSL_INC (
+  set WASIGO_SSL_I=-I "!WASIGO_SSL_INC!"
+  set WASIGO_SSL_L="!WASIGO_SSL_LIB!\libssl.a" "!WASIGO_SSL_LIB!\libcrypto.a"
+  set WASIGO_SSL_D=-DWASIGO_HAS_OPENSSL=1
+  echo             OpenSSL wasm ^(WASMLime TlsTransport / memory BIO^)
+)
 "%WASIGO_CLANG%" -O2 -std=c++20 ^
   -fexceptions -frtti ^
   -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false ^
@@ -96,28 +263,27 @@ if defined HOSTBRIDGE echo             --host-bridge: os.exec/os.user/syscall/tl
   -isystem "%WASIGO_SYSROOT%\include" ^
   -L "%EH_LIB%" -lc++ -lc++abi -lunwind ^
   -Wl,--export=__indirect_function_table ^
-  -I "%GO_DIR%" -I "%~dp0src" ^
-  -DWASIGO_GOCVM=1 %HOSTBRIDGE_DEFINE% ^
-  -o "%OUTWASM%" "%GENCPP%"
+  %WASIGO_PTHREAD_FLAGS% ^
+  -I "%GO_DIR%" -I "%WASIGO_SRC_INC%" !WASIGO_WIN32_I! !WASIGO_NIX_I! !WASIGO_DROID_I! !WASIGO_GOCOS_I! !WASIGO_WOW_I! !WASIGO_PE_I! !WASIGO_SAFE_I! !WASIGO_V8_I! !WASIGO_SSL_I! ^
+  -DWASIGO_GOCVM=1 !WASIGO_WOW_D! !WASIGO_SSL_D! -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID ^
+  -lwasi-emulated-mman ^
+  -o "%OUTWASM%" "%GENCPP%" !WASIGO_WIN32_CC! !WASIGO_NIX_CC! !WASIGO_DROID_CC! !WASIGO_GOCOS_CC! !WASIGO_WOW_CC! !WASIGO_SAFE_CC! !WASIGO_V8_CC! !WASIGO_SSL_L!
 if errorlevel 1 (
   echo wasigocvm clang++ failed
   exit /b 1
 )
 echo.
 echo wasm: %OUTWASM%
-echo run:  ..\shim_sandbox\tools\w2g-run.bat "%OUTWASM%"
+echo run:  wasitime "%OUTWASM%"
 exit /b 0
 
 :usage
-echo usage: wasigocvm.bat ^<input.go^> [-o out.wasm] [--host-bridge] [wasigoc flags...]
+echo usage: wasigocvm.bat ^<input.go^> [-o out.wasm] [wasigoc flags...]
 echo.
-echo Own target: full libc++, RTTI, WASM EH, Oilpan + type_key, gocvm net.
-echo Prefers WASIGO_TOOLCHAIN / toolchain\sysroot; else stock wasi-sdk eh.
-echo Threads need a pthread-capable sysroot ^(toolchain\bootstrap^).
-echo --host-bridge: forward os.exec/os.user/syscall/tls.dial to a companion
-echo                ..\shim_sandbox\gocvm_host.exe over loopback TCP ^(start it
-echo                first -- see docs\wasigocvm.md^). Net topics ^(net/tls.dial
-echo                excluded^) already run in-guest without this flag.
+echo Same machine as compile.bat ^(the default^). Full libc++, RTTI, WASM EH,
+echo Oilpan + type_key, gocvm net. Prefers WASIGO_TOOLCHAIN / toolchain\sysroot.
+echo Isolation is WASMSafeSpace in this module. No companion gocvm_host.
+echo Stock wasip1 noeh leftover: legacy.bat
 exit /b 0
 
 :find_wasigoc

@@ -1,0 +1,18 @@
+// Modeled on the real fuchsia.web Context surface. GetCookieManager/
+// GetRemoteDebuggingPort are omitted rather than stubbed with a dead
+// CookieManager/devtools interface -- see README's Known Simplifications
+// (natural future integration points: WASMCookieMonster, a real devtools
+// port).
+module lime;
+
+import "frame.voodoom";
+
+struct CreateFrameParams {
+  bool enable_remote_debugging;
+  string debug_name;
+};
+
+interface Context {
+  CreateFrame(pending_associated_receiver<Frame> frame);
+  CreateFrameWithParams(CreateFrameParams params, pending_associated_receiver<Frame> frame);
+};

@@ -5,12 +5,13 @@ Public `go list std` minus `internal/` / `vendor/`, compiled as ordinary
 builtins unless the package must touch WASI or the Rosetta runtime (`os`
 fds, `time.Now`). One thread / no growable stacks still applies.
 
-**Status:** 4 builtins + 146 compiled packages. Everyday ported Go++
-source compiles. A package that can't exist on wasm32-wasip1 returns a
-clear "not supported" error or is marked n/a — it never fakes success.
-**wasigocvm** ([wasigocvm.md](wasigocvm.md)) is the web-native machine that
-gives `net` / `net/http` real sockets on wasm (gocvm + poll, not a WIT world).
-Stock wasip1 (`compile.bat`) still falls back to `net.Pipe`.
+**Status:** 4 builtins + compiled packages under `stdlib/`. Everyday ported Go++
+source compiles. **wasigocvm** ([architecture.md](architecture.md), [wasigocvm.md](wasigocvm.md)) is the machine:
+own sysroot, full libc++, EPT/TPT/CHPT, own runtime (`wasitime`). `net` /
+`net/http` are real sockets; `syscall` / `os/user` / `os/exec` / `win32` /
+`linux` / `android` / `crypto/tls` stay in-guest. `gocvm.Call` errors
+surface as-is — there is no shim_sandbox fallback and no userspace TCP
+stand-in. `net.Pipe()` is an in-process duplex, not a host hop.
 
 Per-package notes, bounds, and the compiler bugs each package
 surfaced: [design-log.md](design-log.md) (tracker from
@@ -25,24 +26,28 @@ surfaced: [design-log.md](design-log.md) (tracker from
 | `os` | `Args`, `Exit`, `Getenv`, `File` (`Open`/`Create`/`ReadFile`/`WriteFile`, `Read`/`Write`/`Close`), std streams, `Stat`/`FileInfo`, `ReadDir`/`DirEntry` (real, via `stat(2)`/`opendir`+`readdir`) | `Setenv`, process, `Remove`/`Mkdir` |
 | `reflect` | `TypeOf`/`ValueOf`, `Value`/`Type` (`Kind`/`Name`/`NumField`/`Field`/`FieldName`/`Interface`/`Int`/`Float`/`Bool`/`String`, `Set*`) | no Chan/Func Kind |
 
-Host file I/O from a WASI guest should go through
-[shim_sandbox](https://github.com/goxxlang/shim_sandbox) `w2g::Shim`
-(compile-time ABAC), not ambient `fopen`.
+File I/O is libc in the module (sysroot `fopen` / `stat`). Isolation is
+the WASMSafeSpace cage, not a host shim.
 
-## What WASI cannot do
+## In-module machine
 
-These compile and return a clear error on **wasm32-wasip1**. They are
-the terminal shape there, not a todo: `os/exec`, `os/user`, `net.Dial`
-to a real host (loopback `Listen`/`Dial` `"tcp"` and `Pipe()` are real
-via channels), `crypto/tls`, `syscall` (mutating), `runtime/trace`,
-`runtime/pprof` write half, `embed`.
+These packages talk `gocvm.Call` into wasigocvm
+([architecture.md](architecture.md)):
 
-On **wasigo-p2**, `net`/`net/http` are real sockets (`gocvm` + `poll()`).
-`os/exec` / `crypto/tls` / `os/user` still need the native shim_sandbox
-host.
+| Package | In-module path |
+| --- | --- |
+| `net` / `net/http` | sysroot sockets + `poll()` |
+| `syscall` | libc + win32metadata (`GetCurrentProcessId`, `GetCurrentDirectoryW`, `GetEnvironmentVariableW`, …) |
+| `os/user` | libc USER/USERNAME/HOME |
+| `os/exec` | child in EPT/TPT/CHPT; work is `WASMWin32/` `wasi_call`; `LookPath` is `os.exec.lookpath` |
+| `win32` | WASMWin32 catalog/modules on EPT, process/thread on TPT, token/SID/PEB/TEB/HWND/GDI/COM on CHPT, vmem/WSA/bcrypt/ncrypt/WASMPELoader/crypt32/WinHttp/WinHvPlatform/WinHvEmulation/MainDLL/wininet/setupapi/pdh/wevtapi on EPT; ntdll Nt/Zw/Rtl/Ldr/Tp at kernel32 catalog breadth |
+| `linux` | WASMNix catalog on EPT, process/thread on TPT, session on CHPT; `posix_call` for Linux/WSL/Nix names |
+| `android` | WASMDroid catalog and Binder root on EPT, process/thread on TPT, session on CHPT; `bionic_call` for Bionic/Binder/KVM names |
+| `gocos` | edge kernel; GocKrnl / GocSys hop k32 and nix through gocvm hypervision; vmem on EPT |
+| `crypto/tls` | OpenSSL wasm, memory BIOs (WASMLime `TlsTransport`), not Schannel |
 
-`net.Pipe()` is the duplex [shim_sandbox](https://github.com/goxxlang/shim_sandbox) speaks.
-`net/http` is HTTP/1.0 over `net` (`Get`/`Post`/`Serve`/`ServeMux`).
+`net.Pipe()` is an in-process duplex. `net/http` is HTTP/1.0 over `net`
+(`Get`/`Post`/`Serve`/`ServeMux`).
 
 ## n/a on this target
 
@@ -55,7 +60,8 @@ Everything else under `stdlib/` is present and exercised by a golden.
 Typical bounds, also in each package comment:
 
 - crypto: SHA-2/3, HMAC, HKDF, PBKDF2, AES-128, DES/RC4 (legacy),
-  textbook RSA/DSA, P-256 ECDH/ECDSA, Ed25519. No TLS handshake.
+  textbook RSA/DSA, P-256 ECDH/ECDSA, Ed25519. TLS handshake is
+  `crypto/tls` on wasigocvm (OpenSSL wasm), not these packages.
 - compress/image: real codecs, often decode-general / encode-simple.
 - `encoding/json`: Marshal/Unmarshal of structs via reflect (including
   `json:"name"` / `json:"-"` tags); Unmarshal into a struct pointer
@@ -72,6 +78,27 @@ Typical bounds, also in each package comment:
 
 ## Extensions beyond `go list std`
 
+`stdlib/win32` is the guest API for in-tree `WASMWin32/` (`import "win32"`):
+win32metadata names. WslList/WslExec/Nix still `gocvm.Call("wsl"|"nix")`,
+now dispatched to `WASMNix/`. Stock wasip1 has no bridge.
+
+`stdlib/linux` is the guest API for in-tree `WASMNix/` (`import "linux"`):
+man-pages getpid/uname plus WslList/NixVersion.
+
+`stdlib/android` is the guest API for in-tree `WASMDroid/` (`import "android"`):
+Bionic getpid/uname/api-level plus Binder/KVM hops.
+
+`stdlib/gocos` is the wasigocvm edge kernel (`import "gocos"`). Binding is
+`gocvm.Call("gocos", …)` on gocvm.wasm. GocKrnl / GocSys hop **k32**
+(`WASMWin32/`) and **nix** (`WASMNix/`) through gocvm hypervision.
+Memory is gocvm vmem (EPT + VirtualAlloc / mmap). Not an emulator and
+not a copy of ntoskrnl or Wine. GocShell is `gocvm.Call("gocos", "Cmd")`
+shown with xterm.js in `~/WASMJsLoader` (`cmd.html`); the guest is
+instantiated in the browser, no host bridge.
+
+`stdlib/ogchan` is a clean-room Open Graph document channel (public OG
+/ preview specs, not messenger source).
+
 `stdlib/unil` is not part of real Go's standard library — it's the
 WASMUniLoader "unil" bill-of-materials format (files, runtime
 components, capabilities, canonical JSON, SHA-256 digest, Ed25519
@@ -82,7 +109,7 @@ any stdlib package does (`wasigoc` searches `stdlib/` regardless of
 whether the import path is real Go). See its package doc comment and
 [design-log.md](design-log.md)'s tracker entry.
 
-`stdlib/guac` builds on it: the on-disk shape of a distributable Go++
+`stdlib/guac` builds on unil: the on-disk shape of a distributable Go++
 wasm package — a directory with compiled wasm file(s) plus a
 `guac.json` manifest, which is an ordinary `unil.Document` (no schema
 changes, just two naming conventions — see its package doc comment).

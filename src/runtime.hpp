@@ -68,9 +68,19 @@
 #include <cstdlib>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <cerrno>
+#include <cstring>
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#endif
 #if defined(WASIGO_GOCVM) && WASIGO_GOCVM
 #include "wasigocvm_config.hpp"
-// File-scope (not inside namespace wasigo): wasigocvm_net.hpp POSIX sockets.
+// File-scope (not inside namespace wasigo): wasigocvm_net.hpp POSIX sockets
+// and libc win32/syscall (unistd getpid/uname/stat/clocks).
+#ifndef _WASI_EMULATED_GETPID
+#define _WASI_EMULATED_GETPID 1
+#endif
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
@@ -78,7 +88,41 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/utsname.h>
+#include <time.h>
+#include <unistd.h>
+#if defined(__wasi__)
+#include <wasi/libc-environ.h>
+#endif
 extern "C" int close(int);
+// WASMSafeSpace cage + EPT/TPT, WASMv8bindings CHPT: file-scope (not
+// inside namespace wasigo). wasm32 has no mmap/shared-memory reservation —
+// Sandbox is a heap allocation in linear memory; exec's second address
+// space is the pointer tables (EPT/TPT/CHPT), not a second linear memory.
+#if defined(__has_include)
+#  if __has_include("src/sandbox/sandbox.h")
+#    include "src/sandbox/sandbox.h"
+#    define WASIGO_HAS_WASMSAFESPACE 1
+#  endif
+#endif
+#include "wasigocvm_aspace.hpp"
+// WASMWin32 / WASMNix / WASMDroid headers pull sibling catalogs and
+// (Win32) WASMPELoader's wasmpe/loader.hpp, which (like cppgc above)
+// drag in real <functional>/<tuple> -- same file-scope-first
+// requirement, same reason: wasigocvm_libc.hpp includes them again
+// from inside namespace wasigo, and a second parse there turns std
+// into wasigo::std. Real header guards make the second include from
+// inside namespace wasigo a no-op once this one has already run.
+#define WASMWIN32_WASI_HOST_NO_POSIX_HEADERS 1
+#include "win32/wasi_host.hpp"
+#include "nix/posix_host.hpp"
+#include "droid/bionic_host.hpp"
+#include "gocos/host.hpp"
+#include "wasigocvm_libc.hpp"
+#include "wasigocvm_exec.hpp"
+// OpenSSL (same stack as ~/WASMLime libdatachannel TlsTransport) is
+// pulled in by wasigocvm_tls.hpp when the driver passes a wasm
+// -I .../openssl and links libssl. Native vcpkg DLLs are not this ABI.
 #endif
 #include <initializer_list>
 #include <memory>
@@ -2043,18 +2087,11 @@ void gclear(Slice<T> s) {
 }
 
 // ---- gocvm --------------------------------------------------------------
-// The one dispatch gate between compiled Go++ code and a native host
-// bridge (e.g. ~/shim_sandbox's real Winsock/Win32 backends, wired in
-// under `goclang++.bat --shim-sandbox`). Not a generic FFI: gocvm.Call is
-// the single Go-visible entry point (see cpp_generator.cc's "gocvm"
-// EmitCall branch) -- every crossing goes through the same ABAC check and
-// comes back as a normal wasigo::Error naming the topic, the same shape
-// os/exec's, os/user's, and syscall's own stub errors already have.
+// The one dispatch gate. On wasigocvm, Call hits in-module libc + the
+// Win32/Nix/Droid catalogs (always on). Not a generic FFI.
 namespace gocvm {
 
-inline constexpr const char* kNoBridge =
-    "no host bridge registered (build with goclang++.bat "
-    "--shim-sandbox to link one)";
+inline constexpr const char* kNoBridge = "no gocvm machine";
 
 class HostBridge {
  public:
@@ -2093,9 +2130,8 @@ inline AbacHook*& abac_slot() {
 }
 }  // namespace detail
 
-// A plain wasi-sdk build never calls these -- registration only happens
-// from set_os_args's WASIGO_GOCVM_BRIDGE hook below, which only exists
-// when goclang++.bat --shim-sandbox defined it.
+// A leftover native host may still RegisterHostBridge. wasigocvm does
+// not: Call hits in-module libc first.
 inline void RegisterHostBridge(HostBridge* b) { detail::bridge_slot() = b; }
 inline void RegisterAbacHook(AbacHook* a) { detail::abac_slot() = a; }
 
@@ -2201,6 +2237,17 @@ inline CallResult Call(const std::string& topic, const std::string& payload) {
   if (detail::abac_slot() && !detail::abac_slot()->Check(topic)) {
     return {std::string(), Error("gocvm: " + topic + ": abac deny")};
   }
+#if defined(WASIGO_GOCVM) && WASIGO_GOCVM
+  {
+    std::string libc_reply;
+    if (::gocvm::wasigocvm_try_libc(topic, payload, &libc_reply)) {
+      if (libc_reply.size() >= 6 && libc_reply.compare(0, 6, "error:") == 0) {
+        return {std::string(), Error(libc_reply)};
+      }
+      return {std::move(libc_reply), Error()};
+    }
+  }
+#endif
   if (!detail::bridge_slot()) {
     return {std::string(), Error("gocvm: " + topic + ": " + std::string(kNoBridge))};
   }
@@ -2289,7 +2336,6 @@ inline void set_os_args(int argc, char** argv) {
   wasigo_gocvm_install_bridge();
 #elif defined(WASIGO_GOCVM) && WASIGO_GOCVM && defined(WASIGO_NEED_CORO)
   // wasigocvm: in-module poll() net bridge, not WIT wasi:sockets.
-  // Native goclang++ still prefers shim_sandbox when both could apply.
   gocvm::install_wasigocvm_net_bridge();
 #endif
 }

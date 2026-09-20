@@ -3,7 +3,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 rem goclang++.bat — compile a Go++ program to a NATIVE host executable
-rem with clang++, instead of wasm32-wasip1. Same wasigoc frontend as
+rem with clang++, instead of wasm. Same wasigoc frontend as
 rem compile.bat, different backend compiler and no WASI restrictions
 rem (real exceptions, real threads, real sockets are all available here
 rem -- this is plain host clang++, not the wasi-sdk wasm-only build).
@@ -149,7 +149,7 @@ if defined USE_SHIM (
       echo set SHIM_SANDBOX_DIR, or check out shim_sandbox next to go++ ^(..\shim_sandbox^)
       exit /b 1
     )
-    echo [shim_sandbox] not found next to go++ -- building without gocvm ^(gocvm.Call will report "no host bridge registered"^). Pass --shim-sandbox to make a missing shim_sandbox a hard error, or set SHIM_SANDBOX_DIR.
+    echo [shim_sandbox] not found next to go++ -- building without gocvm ^(gocvm.Call will report "no gocvm machine registered"^). Pass --shim-sandbox to make a missing shim_sandbox a hard error, or set SHIM_SANDBOX_DIR.
     set "USE_SHIM="
   )
 )
@@ -171,8 +171,8 @@ if defined USE_SHIM (
   rem -DWASIGO_GOCVM_BRIDGE=1: makes generated code's gocvm.Call(...)
   rem (wasigo::gocvm in runtime.hpp -- the one dispatch gate real Go++
   rem stdlib source calls, e.g. os/exec.Command(...).Output()) reach
-  rem shim_sandbox's real backends instead of always answering "no host
-  rem bridge registered". Wired at startup by wasigo::set_os_args calling
+  rem shim_sandbox's real backends instead of always answering "no gocvm
+  rem machine registered". Wired at startup by wasigo::set_os_args calling
   rem shim_sandbox's wasigo_gocvm_install_bridge() (src/gocvm_bridge.cc).
   rem -lsecur32 -lcrypt32: real TLS (Schannel/SSPI, src/sapi/tls_win.cc).
   rem -lnetapi32: os/user Lookup/LookupId (NetUserGetInfo, src/sapi/
