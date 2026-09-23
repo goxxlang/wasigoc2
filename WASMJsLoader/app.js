@@ -38,7 +38,7 @@ function showInspect(info) {
 
 async function loadBytes(name, buf) {
   current = { name, bytes: buf };
-  const info = inspect(buf);
+  const info = await inspect(buf);
   current.info = info;
   $("meta").textContent = name + "  " + buf.byteLength + " B";
   showInspect(info);

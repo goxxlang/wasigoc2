@@ -40,7 +40,7 @@ toolchain/sysroot                OUR sysroot (bootstrap.sh)
     └─ WASMGocOS        catalog + GocDesk on EPT; GocKrnl / GocSys hop k32 / nix
     ▼
 wasitime                         WASMLoader + Go++ wazero interpreter + WASMSafeSpace
-    inspect / run / call         ported ~/WASMLoader on examples/wazeropkg, not a vendor dump
+    inspect / run / call         ported ~/WASMLoader on examples/wazgoc, not a vendor dump
 ```
 
 Product gate: `-DWASIGO_GOCVM=1` (`src/wasigocvm_config.hpp`). Stock
@@ -48,18 +48,29 @@ Product gate: `-DWASIGO_GOCVM=1` (`src/wasigocvm_config.hpp`). Stock
 
 ## The three things we own
 
-### 1. Sysroot — `toolchain/`
+### 1. Sysroot — `go++/toolchain/` (only)
 
-`toolchain/bootstrap.sh` / `bootstrap.ps1` builds **our** sysroot into
-`toolchain/sysroot` (or `WASIGO_TOOLCHAIN`). Stamp:
-`toolchain/wasigocvm-toolchain.json` (`name: wasigocvm`,
-`product_define: WASIGO_GOCVM`, exceptions, threads).
+**Canonical location is the repo.** Not `~/wasi-sdk`, not
+`~/wasigocvm-wasi-sdk-*`, not a silent install into `$HOME`.
 
-This is a C/C++ sysroot contract: headers, `eh/` libc++, compiler-rt,
-emulated `mmap` / `getpid`, sockets. Drivers probe `wasm32-wasigocvm`
-then `wasm32-wasip2` **layouts under our prefix**. A clang binary may
-still be named `wasm32-wasip2-clang++` until `bin/wasm32-wasigocvm-clang++`
-is the only wrapper — that is a compiler *filename*, not the ABI.
+| Path | Role |
+| --- | --- |
+| `toolchain/` | `WASIGO_TOOLCHAIN` / install prefix |
+| `toolchain/bin/` | clang wrappers drivers invoke |
+| `toolchain/sysroot/` | eh libc++ + wasi-libc (Windows-visible) |
+| `toolchain/wasigocvm-toolchain.json` | stamp |
+| `toolchain/wasi-sdk-src/` | upstream checkout (bootstrap) |
+| `toolchain/wasi-sdk-build/` | cmake build tree (bootstrap) |
+
+`toolchain/bootstrap.sh` / `bootstrap.ps1` build **into those paths**.
+Override with `WASIGO_WASI_SDK_SRC` / `WASIGO_WASI_SDK_BUILD` /
+`WASIGO_TOOLCHAIN` only on purpose. Leftover
+`~/wasigocvm-wasi-sdk-{src,build}` trees from an older default are
+orphans — drivers do not read them; delete when ready.
+
+Stamp fields: `name: wasigocvm`, `product_define: WASIGO_GOCVM`,
+exceptions, threads. Drivers probe `wasm32-wasigocvm` then
+`wasm32-wasip2` layouts under this prefix.
 [toolchain/README.md](../toolchain/README.md).
 
 ### 2. Libc — POSIX in the module
@@ -99,7 +110,7 @@ leftover ABI. gocvm always has Win32, Nix, and Droid catalogs.
 
 `wasitime.bat` / `wasitime.sh` is **our** engine CLI (wasmtime-shaped
 commands). The compile/run slot Cranelift fills in Wasmtime is
-`examples/wazeropkg` here — interpreter, not ISA codegen.
+`examples/wazgoc` here — interpreter, not ISA codegen.
 Full write-up: [wasitime.md](wasitime.md).
 
 ```
@@ -112,7 +123,7 @@ wasitime example add|hello|...       wasmbin examples (ported ~/WASMLoader)
 
 `inspect` / `run` / `call` are the ported **~/WASMLoader** packages
 (`examples/wasmbinpkg`, `examples/wasmloaderpkg`) on the Go++ wazero
-interpreter (`examples/wazeropkg`): WASMSafeSpace cage + CPT/EPT/TPT,
+interpreter (`examples/wazgoc`): WASMSafeSpace cage + CPT/EPT/TPT,
 WASMv8Bindings-shaped CHPT. The CLI host is `wasitime.exe` (`goclang++`);
 `wasitime.wasm` is the same program as a wasigocvm module. Not a vendor
 dump of tetratelabs/wazero, not w2g/Wasmtime.
@@ -142,7 +153,11 @@ Unix: `wasigocvm.sh`, `wasitime.sh`.
 
 ctest: `hello_wasigocvm`, `netpkg_wasigocvm`, `httppkg_wasigocvm`.
 
-## 2026-09-09: bootstrap notes
+## 2026-09-22: bootstrap paths
+
+Source/build/install all default under `go++/toolchain/`. An earlier
+WSL shortcut put checkout+build in `~/wasigocvm-wasi-sdk-*`; that is
+retired. See [toolchain/README.md](../toolchain/README.md).
 
 Host Clang >=22 for exceptions (`WASI_SDK_EXCEPTIONS=DUAL` → `eh/`+`noeh/`).
 `ln -sfn` from WSL onto `/mnt/*` is a dead reparse point on Windows — copy

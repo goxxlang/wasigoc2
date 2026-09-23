@@ -6,7 +6,7 @@ Wasmtime, not a Cranelift port.
 Wasmtime: CLI (`wasmtime run` / `call` / `inspect`) → **Cranelift**
 (or Winch) compiles wasm to host ISA, then jumps.
 
-wasitime: CLI (`wasitime run` / `call` / `inspect`) → **wazeropkg**
+wasitime: CLI (`wasitime run` / `call` / `inspect`) → **wazgoc**
 compiles the WASM 2 fork to an `Op` stream in the WASMSafeSpace cage,
 names it on CPT/CHPT, then interprets. No Cranelift, no LLVM, no
 wazevo.
@@ -54,7 +54,7 @@ the process can execute.
 wasmbin.GuestCore          peel wrapper → core
   │
   ▼
-wazeropkg.CompileModule    Oilpan job per function
+wazgoc.CompileModule    Oilpan job per function
   │                        code bytes → cage, CPT.Register
   │                        functype interned, CHPT/TPT named
   │
@@ -74,7 +74,7 @@ run / call                 execFn walks Op[]; v128 is a CHPT handle
 | `examples/wasitime` | CLI |
 | `examples/wasmloaderpkg` | load / run / call / link |
 | `examples/wasmbinpkg` | decode |
-| `examples/wazeropkg` | compile + interpret (the Cranelift-slot) |
+| `examples/wazgoc` | compile + interpret (the Cranelift-slot) |
 | `examples/safespacepkg` | cage, GIA, CPT/EPT/TPT |
 | `examples/v8bindpkg` | CHPT |
 

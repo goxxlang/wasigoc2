@@ -42,3 +42,12 @@ Thumbs.db
 .claude/
 .grok/
 .cursor/
+
+# wasigocvm SDK is in-tree. Global *.exe / *.a rules above do not apply to it.
+!toolchain/bin/**
+!toolchain/sysroot/**
+!toolchain/lib/**
+!toolchain/share/**
+!toolchain/clang-resource-dir/**
+!toolchain/wasigocvm-toolchain.json
+!libc/**

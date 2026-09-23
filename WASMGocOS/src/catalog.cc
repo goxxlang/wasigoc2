@@ -113,9 +113,7 @@ static const WasmGocOSApi kApis[] = {
     {"GocShell", "gocshell", "Prompt"},
     {"GocShell", "gocshell", "GetPrompt"},
     {"GocShell", "gocshell", "Shell"},
-    {"GocShell", "gocshell", "Occupy"},
-    {"GocShell", "gocshell", "OccupyCmd"},
-    {"GocShell", "gocshell", "OccupyCalc"},
+    {"GocShell", "gocshell", "CmdExample"},
 };
 
 extern "C" const WasmGocOSApi* wasmgocos_catalog(int* count) {

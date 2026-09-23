@@ -968,3 +968,43 @@ wasigo_add_golden(guacpkg "guacpkg/main.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/time/time.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/hash/crc32/crc32.go")
+# LiveView language: HTML + CSS + JS-events + Jinja2/Go templates in one
+# `live Name { ... }` document. Stock wasip1 has no sockets (http-skip);
+# wasigocvm serves GET / and POST /live/event over HTTP/1.0.
+wasigo_add_golden(liveviewpkg "liveviewpkg/main.go"
+  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\nhttp-skip\\n"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/liveview/liveview.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/liveview/parse.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/liveview/eval.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/html/html.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/json/json.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/net/http/http.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/net/net.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go")
+wasigo_add_wasigocvm_golden(liveviewpkg
+  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\nhttp-ok\\n200\\ntrue\\n200\\ntrue\\n"
+  NETWORK)
+# gorilla/websocket (RFC 6455) port. Pipe handshake uses the RFC 6455
+# accept-key vector (no sockets). Stock wasip1 has no Listen (http-skip);
+# wasigocvm Dial+Upgrade echo over real TCP.
+wasigo_add_golden(websocketpkg "websocketpkg/main.go"
+  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\nfalse\\ntrue\\ntrue\\ntrue\\ntrue\\nhttp-skip\\n"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/websocket/util.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/websocket/conn.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/websocket/server.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/websocket/client.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/net/http/http.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/net/net.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/net/url/url.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/sha1/sha1.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/crypto/rand/rand.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/base64/base64.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/json/json.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/encoding/binary/binary.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/unicode/utf8/utf8.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go")
+wasigo_add_wasigocvm_golden(websocketpkg
+  "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\nfalse\\ntrue\\ntrue\\ntrue\\ntrue\\nhttp-ok\\ntrue\\ntrue\\ntrue\\n"
+  NETWORK)

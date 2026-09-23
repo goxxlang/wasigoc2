@@ -13,13 +13,26 @@ type Request struct {
 	Path   string
 	Host   string
 	Body   string
+	Header map[string]string
+	Conn   *net.Conn
 }
 
 type Response struct {
 	Status      int
 	Body        string
 	ContentType string
+	Hijack      bool
 }
+
+const (
+	StatusSwitchingProtocols = 101
+	StatusOK                 = 200
+	StatusBadRequest         = 400
+	StatusForbidden          = 403
+	StatusNotFound           = 404
+	StatusMethodNotAllowed   = 405
+	StatusInternalServerError = 500
+)
 
 type muxRoute struct {
 	Path string
@@ -112,8 +125,45 @@ func headerValue(raw string, key string) string {
 	return rest[0:e]
 }
 
+func parseHeaders(raw string) map[string]string {
+	m := map[string]string{}
+	rest := raw
+	nl := strings.Index(rest, "\r\n")
+	if nl >= 0 {
+		rest = rest[nl+2:]
+	}
+	for rest != "" {
+		lineEnd := strings.Index(rest, "\r\n")
+		line := rest
+		if lineEnd >= 0 {
+			line = rest[0:lineEnd]
+			rest = rest[lineEnd+2:]
+		} else {
+			rest = ""
+		}
+		if line == "" {
+			break
+		}
+		colon := strings.Index(line, ":")
+		if colon < 0 {
+			continue
+		}
+		k := strings.ToLower(strings.TrimSpace(line[0:colon]))
+		v := strings.TrimSpace(line[colon+1:])
+		m[k] = v
+	}
+	return m
+}
+
+func (r *Request) HeaderGet(name string) string {
+	if r == nil || r.Header == nil {
+		return ""
+	}
+	return r.Header[strings.ToLower(name)]
+}
+
 func parseRequest(raw string, body string) *Request {
-	req := &Request{Method: "GET", Path: "/", Body: body}
+	req := &Request{Method: "GET", Path: "/", Body: body, Header: parseHeaders(raw)}
 	nl := strings.Index(raw, "\r\n")
 	line := raw
 	if nl >= 0 {
@@ -127,6 +177,9 @@ func parseRequest(raw string, body string) *Request {
 		req.Path = parts[1]
 	}
 	req.Host = headerValue(raw, "Host")
+	if req.Host == "" {
+		req.Host = req.HeaderGet("Host")
+	}
 	return req
 }
 
@@ -137,6 +190,18 @@ func writeResponse(c *net.Conn, resp *Response) {
 	reason := "OK"
 	if resp.Status == 404 {
 		reason = "Not Found"
+	}
+	if resp.Status == 101 {
+		reason = "Switching Protocols"
+	}
+	if resp.Status == 400 {
+		reason = "Bad Request"
+	}
+	if resp.Status == 403 {
+		reason = "Forbidden"
+	}
+	if resp.Status == 405 {
+		reason = "Method Not Allowed"
 	}
 	if resp.Status == 500 {
 		reason = "Internal Server Error"
@@ -207,6 +272,7 @@ func ServeHandler(ln *net.TCPListener, mux *ServeMux) error {
 
 func serveMuxOne(c *net.Conn, mux *ServeMux) {
 	req, _ := ReadRequest(c)
+	req.Conn = c
 	resp := &Response{Status: 200, ContentType: "text/plain"}
 	fn := mux.match(req.Path)
 	if fn == nil {
@@ -214,6 +280,9 @@ func serveMuxOne(c *net.Conn, mux *ServeMux) {
 		resp.Body = "not found"
 	} else {
 		fn(req, resp)
+	}
+	if resp.Hijack {
+		return
 	}
 	WriteResponse(c, resp)
 	c.Close()

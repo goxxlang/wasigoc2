@@ -1,14 +1,10 @@
-# Built / downloaded wasigocvm sysroot and wasi-sdk source checkouts.
-# Prefer cloning sources to ~/wasigocvm-wasi-sdk-src on WSL (see bootstrap.sh).
-sysroot/
-bin/
-lib/
-share/
-clang-resource-dir/
-wasi-sdk-src/
-wasi-sdk-build/
-wasigocvm-toolchain.json
+# The SDK (bin, sysroot, lib, share, clang-resource-dir) is part of this
+# repo. Do not ignore it.
 *.wasm
 *.tar.gz
 *.log
 openssl-wasm/build/
+wasmtime-46/
+# Bootstrap checkout + cmake tree (large; not the installed SDK)
+wasi-sdk-src/
+wasi-sdk-build/

@@ -20,16 +20,27 @@ const types = {
   ".json": "application/json",
 };
 
-function guestWasm() {
-  const names = [
-    path.join(root, "guest", "cmdterm.wasm"),
-    path.join(root, "..", "go++", "examples", "cmdterm", "cmdterm.wasm"),
-    path.join(home, "go++", "examples", "cmdterm", "cmdterm.wasm"),
-  ];
+function firstExisting(names) {
   for (const p of names) {
     if (fs.existsSync(p)) return p;
   }
   return names[0];
+}
+
+function guestWasm() {
+  return firstExisting([
+    path.join(root, "guest", "cmdterm.wasm"),
+    path.join(root, "..", "go++", "examples", "cmdterm", "cmdterm.wasm"),
+    path.join(home, "go++", "examples", "cmdterm", "cmdterm.wasm"),
+  ]);
+}
+
+function proofWasm() {
+  return firstExisting([
+    path.join(root, "guest", "proofshow.wasm"),
+    path.join(root, "..", "examples", "proofshow", "proofshow.wasm"),
+    path.join(home, "go++", "examples", "proofshow", "proofshow.wasm"),
+  ]);
 }
 
 const server = http.createServer((req, res) => {
@@ -39,6 +50,8 @@ const server = http.createServer((req, res) => {
   let file;
   if (rel === "/guest/cmdterm.wasm" || rel === "/cmdterm.wasm") {
     file = guestWasm();
+  } else if (rel === "/guest/proofshow.wasm" || rel === "/proofshow.wasm") {
+    file = proofWasm();
   } else {
     file = path.normalize(path.join(root, rel));
     if (!file.startsWith(root)) {
@@ -53,7 +66,7 @@ const server = http.createServer((req, res) => {
       res.end("not found");
       return;
     }
-    if (rel === "/guest/cmdterm.wasm" || rel === "/cmdterm.wasm") {
+    if (rel === "/guest/cmdterm.wasm" || rel === "/cmdterm.wasm" || rel === "/guest/proofshow.wasm" || rel === "/proofshow.wasm") {
       const u8 = new Uint8Array(data);
       if (!peelMimicryWasm(u8) && u8.length >= 8 && u8[4] === 0x0d) {
         data = Buffer.from(wrapMimicryWasm(u8));

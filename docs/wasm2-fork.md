@@ -88,7 +88,7 @@ compile.bat / wasigocvm.bat     -DWASIGO_GOCVM=1
         │                       libc, gocvm, cage, EPT/TPT/CHPT in-module
         ▼
 wasitime                        interpreter of this fork
-        inspect / run / call    examples/wazeropkg + wasmbin + safespace + v8bind
+        inspect / run / call    examples/wazgoc + wasmbin + safespace + v8bind
 ```
 
 | Name | Role in the fork |
@@ -125,7 +125,7 @@ Packages (Go++ subset, not a wazero vendor dump):
 | Package | Port of | Job |
 | --- | --- | --- |
 | `examples/wasmbinpkg` | ~/WASMLoader wasmbin | Decode core sections; peel outer wrapper |
-| `examples/wazeropkg` | wazero-shaped API | Compile to `Op`s, instantiate, execute |
+| `examples/wazgoc` | wazero-shaped API | Compile to `Op`s, instantiate, execute |
 | `examples/safespacepkg` | ~/WASMSafeSpace | Cage, GIA, CPT/EPT/TPT |
 | `examples/v8bindpkg` | ~/WASMv8bindings CHPT | `{ptr, tag}` handles |
 | `examples/wasmloaderpkg` | ~/WASMLoader | Load / run / call / link |
@@ -183,7 +183,7 @@ sections, imports/exports, name-section function names.
 
 | Path | What |
 | --- | --- |
-| `examples/wazeropkg/` | Interpreter (compile, exec, SIMD, atomics, intern, grow) |
+| `examples/wazgoc/` | Interpreter (compile, exec, SIMD, atomics, intern, grow) |
 | `examples/wasmbinpkg/` | Core decoder |
 | `examples/safespacepkg/` | Cage + tables |
 | `examples/v8bindpkg/` | CHPT |

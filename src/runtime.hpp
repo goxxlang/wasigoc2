@@ -1797,6 +1797,34 @@ inline Error os_write_file(const std::string& name, Slice<uint8_t> data, int64_t
   return Error();
 }
 
+// Directory ops the host ABIs (WASMWin32 / WASMNix / WASMDroid) call
+// through libc. Native builds use the host CRT. The wasigocvm module's
+// goclibc replaces these symbols and writes through the client.
+inline Error os_mkdir(const std::string& name) {
+#if defined(_WIN32) && !defined(__wasi__)
+  if (_mkdir(name.c_str()) != 0) return errors_new("mkdir " + name);
+#else
+  if (::mkdir(name.c_str(), 0777) != 0) return errors_new("mkdir " + name);
+#endif
+  return Error();
+}
+
+inline Error os_remove(const std::string& name) {
+#if defined(_WIN32) && !defined(__wasi__)
+  if (_unlink(name.c_str()) == 0) return Error();
+  if (_rmdir(name.c_str()) == 0) return Error();
+#else
+  if (::unlink(name.c_str()) == 0) return Error();
+  if (::rmdir(name.c_str()) == 0) return Error();
+#endif
+  return errors_new("remove " + name);
+}
+
+inline Error os_rename(const std::string& from, const std::string& to) {
+  if (std::rename(from.c_str(), to.c_str()) != 0) return errors_new("rename " + from);
+  return Error();
+}
+
 // ---- os.FileInfo / os.Stat ------------------------------------------------
 // Backed by plain <sys/stat.h> `stat(2)` -- wasi-libc implements it via
 // WASI's path_filestat_get the same way it implements fopen/fread above, and

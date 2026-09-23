@@ -323,7 +323,7 @@ One linear memory: isolation is the tables. The child occupies a
 | TLS | OpenSSL 3.6.3 wasm (`toolchain/openssl-wasm` `libssl.a`) with memory BIOs, same shape as `WASMLime/` `TlsTransport` (`SSL_do_handshake`, SNI) | Schannel, native vcpkg mingw DLLs, `gocvm_host` |
 | mmap / getpid | mmap is cage linear memory (`-D_WASI_EMULATED_MMAN`); getpid is the occupancy table (not libwasi-emulated-getpid) | host pid, host `VirtualAlloc` |
 | syscall / os.user / kill | `wasigocvm_libc.hpp` | host hop |
-| `.wasm` load/run/call | in-tree `WASMLoader/` (Go++ port `examples/wasmloaderpkg`) on the Go++ wazero interpreter (`examples/wazeropkg`) + WASMSafeSpace + WASMv8Bindings CHPT | rewriting the guest as host applets; vendoring tetratelabs/wazero; w2g |
+| `.wasm` load/run/call | in-tree `WASMLoader/` (Go++ port `examples/wasmloaderpkg`) on the Go++ wazero interpreter (`examples/wazgoc`) + WASMSafeSpace + WASMv8Bindings CHPT | rewriting the guest as host applets; vendoring tetratelabs/wazero; w2g |
 
 CA store: `SSL_CERT_FILE` / `SSL_CERT_DIR`. WASMNetStack is an SCTP/WSS
 overlay, not TLS 1.3 over TCP; it is not this handshake.
@@ -384,7 +384,7 @@ module already has.
 | TLS | `src/wasigocvm_tls.hpp` |
 | Driver | `compile.bat` (default), `wasigocvm.bat` / `wasigocvm.sh` |
 | Runtime CLI | `wasitime.bat` / `wasitime.sh`, `examples/wasitime`, `examples/wasmloaderpkg` |
-| Go++ wazero interpreter | `examples/wazeropkg` (compile-to-ops + execute; not a vendor dump) |
+| Go++ wazero interpreter | `examples/wazgoc` (compile-to-ops + execute; not a vendor dump) |
 | WASMLoader port | `examples/wasmbinpkg`, `examples/wasmloaderpkg` |
 | WASMSafeSpace port | `examples/safespacepkg` |
 | WASMv8Bindings CHPT port | `examples/v8bindpkg` |

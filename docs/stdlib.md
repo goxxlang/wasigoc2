@@ -120,6 +120,25 @@ between a directory and its manifest. It does not create directories
 a `guac` CLI wrapping `wasigoc`/`goclang++` builds around this layer
 doesn't exist yet.
 
+`stdlib/websocket` is a Go++ port of [gorilla/websocket](https://github.com/gorilla/websocket)
+v1.5.3 (`import "websocket"`): RFC 6455 frames, `Conn.ReadMessage`/
+`WriteMessage`, `Upgrader.Upgrade`, `Dialer.Dial`, `ReadJSON`/`WriteJSON`,
+the RFC accept-key GUID, client masking. gorilla's `ResponseWriter.Hijack`
+is `Request.Conn` + `Response.Hijack` on this `net/http`. No DialContext,
+Proxy, TLS/`wss`, permessage-deflate, NextReader/NextWriter, or write
+deadlines. `maskBytes` is gorilla's safe byte loop, not the unsafe word
+path. Challenge/mask keys use this `crypto/rand` (xorshift, not a CSPRNG).
+
+`stdlib/liveview` is a LiveView web framework (`import "liveview"`): one
+language covering HTML, CSS, JS-events, and Jinja2/Go templates. A
+document is `live Name { state {…} style {…} view {…} event x {…} }`.
+`view` accepts HTML tags and GuiKit GML (`div#id.class`). Templates are
+Go `{{ .Field }}` / `{{ if }}` / `{{ range }}` and Jinja2 `{% if %}` /
+`{% for x in y %}`. Events replace client JS; `gk-click` / `gk-submit`
+POST JSON to `/live/event` (HTTP/1.0 — this `net/http` has no WebSocket)
+and patch the component's outerHTML. Interpolations are HTML-escaped
+unless piped through `| safe`. No wrapper/import filesystem.
+
 Building it surfaced a real, previously-latent bug in
 `crypto/ed25519`: the `dEd` curve constant had a digit transcription
 error, so the compiled-in base point never actually satisfied the

@@ -376,9 +376,9 @@ export function guestCore(raw) {
   return b;
 }
 
-export function inspect(bytesIn) {
+export async function inspect(bytesIn) {
   const core = guestCore(bytesIn);
-  const mod = new WebAssembly.Module(core);
+  const mod = await WebAssembly.compile(core);
   const imports = WebAssembly.Module.imports(mod).map((i) => ({
     module: i.module,
     name: i.name,
@@ -639,10 +639,222 @@ function bindP2Imports(mod, imports, p2) {
   });
 }
 
+// Client file table for goclibc. The unil sandbox (wasmv16 / quickjs-ng)
+// is the JS runner, and this page is that client. serve.mjs only delivers
+// bytes; it does not instantiate the guest.
+function makeGocLibc(mem) {
+  const boxes = [null];
+  const fds = [null];
+  const dirs = new Set();
+  let cwd = ".";
+  function norm(p) {
+    return String(p).replace(/\\/g, "/").replace(/\/+$/, "");
+  }
+  function parent(p) {
+    const s = norm(p);
+    const i = s.lastIndexOf("/");
+    return i < 0 ? "" : s.slice(0, i);
+  }
+  function readStr(ptr, n) {
+    const m = mem();
+    if (!m || n <= 0) return "";
+    let s = "";
+    const b = bytes(m, ptr, n);
+    for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return s;
+  }
+  function putStat(out, isdir, size) {
+    const m = mem();
+    const mode = isdir ? 0x4000 | 0o755 : 0x8000 | 0o644;
+    u32(m, out, mode);
+    u32(m, out + 4, isdir ? 1 : 0);
+    u64(m, out + 8, size);
+  }
+  function newBox(path, data) {
+    const box = { path: norm(path), data: data || new Uint8Array(0), refs: 1 };
+    boxes.push(box);
+    return boxes.length - 1;
+  }
+  function newFd(box, app, pos) {
+    fds.push({ box, pos, append: app });
+    return fds.length - 1;
+  }
+  function fdOk(fd) {
+    return fd > 0 && fd < fds.length && fds[fd];
+  }
+  const api = {
+    open(pathPtr, pathLen, flags) {
+      const path = norm(readStr(pathPtr, pathLen));
+      if (!path) return -22;
+      const trunc = flags & 8;
+      const creat = flags & 4;
+      const app = flags & 16 ? 1 : 0;
+      let data = null;
+      const hit = boxes.find((b) => b && b.path === path);
+      if (!trunc && hit) data = hit.data;
+      else if (!trunc && !creat && !hit) return -2;
+      else data = new Uint8Array(0);
+      const id = newBox(path, data);
+      let pos = 0;
+      if (app) pos = boxes[id].data.length;
+      return newFd(id, app, pos);
+    },
+    read(fd, ptr, n) {
+      if (!fdOk(fd) || n <= 0) return fdOk(fd) ? 0 : -9;
+      const slot = fds[fd];
+      const data = boxes[slot.box].data;
+      if (slot.pos >= data.length) return 0;
+      const avail = Math.min(n, data.length - slot.pos);
+      bytes(mem(), ptr, avail).set(data.subarray(slot.pos, slot.pos + avail));
+      slot.pos += avail;
+      return avail;
+    },
+    write(fd, ptr, n) {
+      if (!fdOk(fd)) return -9;
+      const slot = fds[fd];
+      const box = boxes[slot.box];
+      const src = n > 0 ? bytes(mem(), ptr, n) : new Uint8Array(0);
+      if (slot.append) slot.pos = box.data.length;
+      const end = slot.pos + src.length;
+      const next = new Uint8Array(Math.max(box.data.length, end));
+      next.set(box.data);
+      next.set(src, slot.pos);
+      box.data = next;
+      slot.pos = end;
+      return src.length;
+    },
+    close(fd) {
+      if (!fdOk(fd)) return -9;
+      const slot = fds[fd];
+      boxes[slot.box].refs--;
+      fds[fd] = null;
+      return 0;
+    },
+    seek(fd, off, whence) {
+      if (!fdOk(fd)) return -9;
+      const slot = fds[fd];
+      const len = boxes[slot.box].data.length;
+      let base = 0;
+      if (whence === 1) base = slot.pos;
+      if (whence === 2) base = len;
+      const npos = base + (off | 0);
+      if (npos < 0) return -22;
+      slot.pos = npos;
+      return npos;
+    },
+    flush(fd) {
+      return fdOk(fd) ? 0 : -9;
+    },
+    stat(pathPtr, pathLen, out) {
+      const path = norm(readStr(pathPtr, pathLen));
+      if (dirs.has(path)) {
+        putStat(out, 1, 0);
+        return 0;
+      }
+      const hit = boxes.find((b) => b && b.path === path && b.refs > 0);
+      if (!hit) return -2;
+      putStat(out, 0, hit.data.length);
+      return 0;
+    },
+    fstat(fd, out) {
+      if (!fdOk(fd)) return -9;
+      const box = boxes[fds[fd].box];
+      putStat(out, dirs.has(box.path) ? 1 : 0, box.data.length);
+      return 0;
+    },
+    mkdir(pathPtr, pathLen) {
+      const path = norm(readStr(pathPtr, pathLen));
+      if (!path) return -22;
+      if (dirs.has(path)) return -17;
+      dirs.add(path);
+      return 0;
+    },
+    unlink(pathPtr, pathLen) {
+      const path = norm(readStr(pathPtr, pathLen));
+      if (dirs.has(path)) return -21;
+      let found = false;
+      for (let i = 1; i < boxes.length; i++) {
+        if (boxes[i] && boxes[i].path === path) {
+          boxes[i] = null;
+          found = true;
+        }
+      }
+      return found ? 0 : -2;
+    },
+    rmdir(pathPtr, pathLen) {
+      const path = norm(readStr(pathPtr, pathLen));
+      if (!dirs.has(path)) return -2;
+      dirs.delete(path);
+      return 0;
+    },
+    rename(oldPtr, oldLen, newPtr, newLen) {
+      const a = norm(readStr(oldPtr, oldLen));
+      const b = norm(readStr(newPtr, newLen));
+      if (dirs.has(a)) {
+        dirs.delete(a);
+        dirs.add(b);
+        return 0;
+      }
+      const hit = boxes.find((x) => x && x.path === a);
+      if (!hit) return -2;
+      hit.path = b;
+      return 0;
+    },
+    access(pathPtr, pathLen) {
+      const path = norm(readStr(pathPtr, pathLen));
+      if (dirs.has(path)) return 0;
+      return boxes.some((b) => b && b.path === path) ? 0 : -2;
+    },
+    getcwd(buf, cap) {
+      const s = cwd;
+      if (cap < s.length + 1) return -22;
+      const m = mem();
+      const b = bytes(m, buf, s.length + 1);
+      for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 255;
+      b[s.length] = 0;
+      return s.length;
+    },
+    chdir(pathPtr, pathLen) {
+      const path = norm(readStr(pathPtr, pathLen));
+      if (!dirs.has(path) && path !== "." && path !== "") return -2;
+      cwd = path || ".";
+      return 0;
+    },
+    readdir(pathPtr, pathLen, buf, cap) {
+      const path = norm(readStr(pathPtr, pathLen));
+      const names = [];
+      dirs.forEach((d) => {
+        if (parent(d) === path) names.push("d" + d.slice(path.length + 1));
+      });
+      boxes.forEach((b) => {
+        if (b && parent(b.path) === path) names.push("f" + b.path.slice(b.path.lastIndexOf("/") + 1));
+      });
+      const out = [];
+      for (let i = 0; i < names.length; i++) {
+        const kind = names[i].charCodeAt(0);
+        const rest = names[i].slice(1);
+        out.push(kind);
+        for (let j = 0; j < rest.length; j++) out.push(rest.charCodeAt(j) & 255);
+        out.push(0);
+      }
+      if (out.length > cap) return -22;
+      if (out.length) bytes(mem(), buf, out.length).set(out);
+      return out.length;
+    },
+    dup(fd) {
+      if (!fdOk(fd)) return -9;
+      const slot = fds[fd];
+      boxes[slot.box].refs++;
+      return newFd(slot.box, slot.append, slot.pos);
+    },
+  };
+  return api;
+}
+
 export async function instantiate(bytes, opts) {
   opts = opts || {};
   const core = guestCore(bytes);
-  const mod = new WebAssembly.Module(core);
+  const mod = await WebAssembly.compile(core);
   const wasi = makeWasi(opts);
   const p2 = makeWasi02(opts, wasi.inst);
   const env = {
@@ -667,6 +879,7 @@ export async function instantiate(bytes, opts) {
     wasi_snapshot_preview1: wasi.preview1,
     wasi_unstable: wasi.preview1,
     env,
+    goclibc: makeGocLibc(() => wasi.inst.exports.memory),
   };
   const imports = stubImports(mod, base);
   bindP2Imports(mod, imports, p2);

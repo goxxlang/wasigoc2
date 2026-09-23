@@ -145,14 +145,107 @@ inline std::string cwd() {
   return std::string(buf);
 }
 
+// Process environment owned by this module. WASMGocOS reads it through
+// the k32 hop (GetEnvironmentVariableW / GetEnvironmentStringsW). The
+// block is a Windows environment. A value already in the process is kept.
+inline std::map<std::string, std::string>& module_env() {
+  static std::map<std::string, std::string> m;
+  return m;
+}
+
+inline void ensure_windows_env() {
+  static int once = 0;
+  if (once) return;
+  once = 1;
+  struct Row {
+    const char* k;
+    const char* v;
+  };
+  static const Row rows[] = {
+      {"ALLUSERSPROFILE", "C:\\ProgramData"},
+      {"APPDATA", "C:\\Users\\wasigocvm\\AppData\\Roaming"},
+      {"CommonProgramFiles", "C:\\Program Files\\Common Files"},
+      {"CommonProgramFiles(x86)", "C:\\Program Files (x86)\\Common Files"},
+      {"COMPUTERNAME", "WASIGO"},
+      {"ComSpec", "C:\\Windows\\System32\\cmd.exe"},
+      {"HOME", "C:\\Users\\wasigocvm"},
+      {"HOMEDRIVE", "C:"},
+      {"HOMEPATH", "\\Users\\wasigocvm"},
+      {"LOCALAPPDATA", "C:\\Users\\wasigocvm\\AppData\\Local"},
+      {"LOGNAME", "wasigocvm"},
+      {"NUMBER_OF_PROCESSORS", "1"},
+      {"OS", "Windows_NT"},
+      {"PATH", "C:\\Windows\\System32;C:\\Windows"},
+      {"PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC"},
+      {"PROCESSOR_ARCHITECTURE", "AMD64"},
+      {"ProgramData", "C:\\ProgramData"},
+      {"ProgramFiles", "C:\\Program Files"},
+      {"ProgramFiles(x86)", "C:\\Program Files (x86)"},
+      {"PUBLIC", "C:\\Users\\Public"},
+      {"SystemDrive", "C:"},
+      {"SystemRoot", "C:\\Windows"},
+      {"TEMP", "C:\\Users\\wasigocvm\\AppData\\Local\\Temp"},
+      {"TMP", "C:\\Users\\wasigocvm\\AppData\\Local\\Temp"},
+      {"TMPDIR", "C:\\Users\\wasigocvm\\AppData\\Local\\Temp"},
+      {"USER", "wasigocvm"},
+      {"USERDOMAIN", "WASIGO"},
+      {"USERNAME", "wasigocvm"},
+      {"USERPROFILE", "C:\\Users\\wasigocvm"},
+      {"WINDIR", "C:\\Windows"},
+      {"windir", "C:\\Windows"},
+  };
+  for (const Row& r : rows) {
+    if (module_env().count(r.k)) continue;
+    const char* cur = std::getenv(r.k);
+    if (cur && cur[0])
+      module_env()[r.k] = cur;
+    else {
+      module_env()[r.k] = r.v;
+      setenv(r.k, r.v, 0);
+    }
+  }
+#if defined(__wasi__)
+  char** env = __wasilibc_get_environ();
+#else
+  extern char** environ;
+  char** env = environ;
+#endif
+  if (env) {
+    for (char** e = env; *e; ++e) {
+      std::string row = *e;
+      size_t eqp = row.find('=');
+      if (eqp == std::string::npos || eqp == 0) continue;
+      std::string k = row.substr(0, eqp);
+      if (!module_env().count(k)) module_env()[k] = row.substr(eqp + 1);
+    }
+  }
+}
+
+inline const char* env_get(const char* key) {
+  ensure_windows_env();
+  if (!key || !key[0]) return nullptr;
+  auto it = module_env().find(key);
+  if (it == module_env().end() || it->second.empty()) return nullptr;
+  return it->second.c_str();
+}
+
+inline void env_set(const char* key, const char* val) {
+  ensure_windows_env();
+  if (!key || !key[0]) return;
+  if (!val || !val[0]) {
+    module_env().erase(key);
+    unsetenv(key);
+    return;
+  }
+  module_env()[key] = val;
+  setenv(key, val, 1);
+}
+
 inline std::string windir() {
-  if (const char* w = std::getenv("WINDIR")) {
-    if (w[0]) return w;
-  }
-  if (const char* w = std::getenv("WASIGO_WINDIR")) {
-    if (w[0]) return w;
-  }
-  return "/";
+  if (const char* w = env_get("WINDIR")) return w;
+  if (const char* w = env_get("SystemRoot")) return w;
+  if (const char* w = env_get("WASIGO_WINDIR")) return w;
+  return "C:\\Windows";
 }
 
 inline unsigned file_attrs(const char* path) {
@@ -192,18 +285,14 @@ inline std::string join1f(const std::string& a, const std::string& b) {
 }
 
 inline std::string env_strings() {
-#if defined(__wasi__)
-  char** env = __wasilibc_get_environ();
-#else
-  extern char** environ;
-  char** env = environ;
-#endif
+  ensure_windows_env();
   std::string out;
-  if (env) {
-    for (char** e = env; *e; ++e) {
-      if (!out.empty()) out.push_back('\x1f');
-      out += *e;
-    }
+  for (const auto& kv : module_env()) {
+    if (kv.second.empty()) continue;
+    if (!out.empty()) out.push_back('\x1f');
+    out += kv.first;
+    out.push_back('=');
+    out += kv.second;
   }
   return out;
 }
@@ -222,7 +311,7 @@ inline std::string expand_env(const char* in) {
       break;
     }
     std::string key = s.substr(i + 1, j - i - 1);
-    const char* v = key.empty() ? nullptr : std::getenv(key.c_str());
+    const char* v = key.empty() ? nullptr : env_get(key.c_str());
     if (v)
       out += v;
     else
@@ -401,7 +490,7 @@ inline std::string wasi_call(const char* api, const char* args) {
   }
   if (eq(api, "GetEnvironmentVariableW")) {
     if (!a[0]) return err_msg("GetEnvironmentVariableW: empty name");
-    const char* v = std::getenv(a);
+    const char* v = env_get(a);
     if (!v) return err_msg("GetEnvironmentVariableW: not found");
     return v;
   }
@@ -409,16 +498,16 @@ inline std::string wasi_call(const char* api, const char* args) {
     return windir();
   }
   if (eq(api, "GetSystemDirectoryW")) {
-    if (const char* s = std::getenv("WASIGO_SYSDIR")) {
-      if (s[0]) return s;
-    }
-    return "/lib";
+    if (const char* s = env_get("WASIGO_SYSDIR")) return s;
+    std::string w = windir();
+    if (!w.empty() && w.back() != '\\' && w.back() != '/') w.push_back('\\');
+    return w + "System32";
   }
   if (eq(api, "GetCurrentDirectoryW")) {
     return cwd();
   }
   if (eq(api, "GetModuleFileNameW")) {
-    if (const char* p = std::getenv("_")) {
+    if (const char* p = env_get("_")) {
       if (p[0]) return p;
     }
     std::string d = cwd();
@@ -455,13 +544,13 @@ inline std::string wasi_call(const char* api, const char* args) {
     return "ok";
   }
   if (eq(api, "GetUserNameW")) {
-    if (const char* u = std::getenv("USER")) {
+    if (const char* u = env_get("USER")) {
       if (u[0]) return u;
     }
-    if (const char* u = std::getenv("USERNAME")) {
+    if (const char* u = env_get("USERNAME")) {
       if (u[0]) return u;
     }
-    if (const char* u = std::getenv("LOGNAME")) {
+    if (const char* u = env_get("LOGNAME")) {
       if (u[0]) return u;
     }
     return "wasigocvm";
@@ -471,16 +560,16 @@ inline std::string wasi_call(const char* api, const char* args) {
   if (eq(api, "GetLocalTime")) return system_time(true);
   if (eq(api, "GetSystemTimeAsFileTime")) return filetime_now();
   if (eq(api, "GetCommandLineW")) {
-    if (const char* p = std::getenv("_")) {
+    if (const char* p = env_get("_")) {
       if (p[0]) return p;
     }
     return "main.wasm";
   }
   if (eq(api, "GetTempPathW")) {
-    if (const char* t = std::getenv("TMPDIR")) {
+    if (const char* t = env_get("TMPDIR")) {
       if (t[0]) return t;
     }
-    if (const char* t = std::getenv("TEMP")) {
+    if (const char* t = env_get("TEMP")) {
       if (t[0]) return t;
     }
     return "/tmp";
@@ -490,11 +579,7 @@ inline std::string wasi_call(const char* api, const char* args) {
     std::string name, val;
     split1f(a, &name, &val);
     if (name.empty()) return err_msg("SetEnvironmentVariableW: empty name");
-    if (val.empty()) {
-      if (unsetenv(name.c_str()) != 0) return err("SetEnvironmentVariableW");
-    } else if (setenv(name.c_str(), val.c_str(), 1) != 0) {
-      return err("SetEnvironmentVariableW");
-    }
+    env_set(name.c_str(), val.c_str());
     return "ok";
   }
   if (eq(api, "SetCurrentDirectoryW")) {

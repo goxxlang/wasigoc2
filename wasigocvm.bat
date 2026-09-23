@@ -191,6 +191,19 @@ if defined WASIGO_GOCOS (
     echo             WASMGocOS catalog on EPT ^(CHPT session, GocDesk^)
   )
 )
+set "WASIGO_CHROME="
+if exist "%USERPROFILE%\WASMChrome\include\chrome\host.hpp" set "WASIGO_CHROME=%USERPROFILE%\WASMChrome"
+if not defined WASIGO_CHROME if exist "%WASIGO_ROOT%\WASMChrome\include\chrome\host.hpp" set "WASIGO_CHROME=%WASIGO_ROOT%\WASMChrome"
+if not defined WASIGO_CHROME if exist "%WASIGO_ROOT%\..\WASMChrome\include\chrome\host.hpp" for %%I in ("%WASIGO_ROOT%\..\WASMChrome") do set "WASIGO_CHROME=%%~fI"
+set "WASIGO_CHROME_I="
+set "WASIGO_CHROME_CC="
+set "WASIGO_CHROME_D="
+if defined WASIGO_CHROME (
+  set WASIGO_CHROME_I=-I "!WASIGO_CHROME!\include"
+  set WASIGO_CHROME_D=-DWASIGO_HAS_WASMCHROME=1
+  set WASIGO_CHROME_CC="!WASIGO_CHROME!\src\catalog.cc" "!WASIGO_CHROME!\src\host.cc" "!WASIGO_CHROME!\src\webui_catalog.cc"
+  echo             -I "!WASIGO_CHROME!\include" ^(WASMChrome mojom catalog^)
+)
 set "WASIGO_WOW="
 if exist "%WASIGO_ROOT%\WSMOccpuyWin32\include\wow\occupancy.h" set "WASIGO_WOW=%WASIGO_ROOT%\WSMOccpuyWin32"
 if not defined WASIGO_WOW if exist "%USERPROFILE%\WSMOccpuyWin32\include\wow\occupancy.h" set "WASIGO_WOW=%USERPROFILE%\WSMOccpuyWin32"
@@ -254,7 +267,8 @@ if defined WASIGO_SSL_INC (
   set WASIGO_SSL_D=-DWASIGO_HAS_OPENSSL=1
   echo             OpenSSL wasm ^(WASMLime TlsTransport / memory BIO^)
 )
-"%WASIGO_CLANG%" -O2 -std=c++20 ^
+set "GOCLC_WRAP=-Wl,--wrap=fopen -Wl,--wrap=fclose -Wl,--wrap=fread -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fseek -Wl,--wrap=ftell -Wl,--wrap=fileno -Wl,--wrap=fdopen -Wl,--wrap=feof -Wl,--wrap=ferror -Wl,--wrap=clearerr -Wl,--wrap=rewind -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=fstat -Wl,--wrap=mkdir -Wl,--wrap=rmdir -Wl,--wrap=unlink -Wl,--wrap=remove -Wl,--wrap=rename -Wl,--wrap=access -Wl,--wrap=getcwd -Wl,--wrap=chdir -Wl,--wrap=opendir -Wl,--wrap=readdir -Wl,--wrap=closedir -Wl,--wrap=pipe -Wl,--wrap=dup -Wl,--wrap=dup2"
+"%WASIGO_CLANG%" -O2 -std=c++20 -fuse-ld=lld ^
   -fexceptions -frtti ^
   -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false ^
   -nostdinc++ ^
@@ -263,11 +277,12 @@ if defined WASIGO_SSL_INC (
   -isystem "%WASIGO_SYSROOT%\include" ^
   -L "%EH_LIB%" -lc++ -lc++abi -lunwind ^
   -Wl,--export=__indirect_function_table ^
+  %GOCLC_WRAP% ^
   %WASIGO_PTHREAD_FLAGS% ^
-  -I "%GO_DIR%" -I "%WASIGO_SRC_INC%" !WASIGO_WIN32_I! !WASIGO_NIX_I! !WASIGO_DROID_I! !WASIGO_GOCOS_I! !WASIGO_WOW_I! !WASIGO_PE_I! !WASIGO_SAFE_I! !WASIGO_V8_I! !WASIGO_SSL_I! ^
-  -DWASIGO_GOCVM=1 !WASIGO_WOW_D! !WASIGO_SSL_D! -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID ^
+  -I "%GO_DIR%" -I "%WASIGO_SRC_INC%" !WASIGO_WIN32_I! !WASIGO_NIX_I! !WASIGO_DROID_I! !WASIGO_GOCOS_I! !WASIGO_CHROME_I! !WASIGO_WOW_I! !WASIGO_PE_I! !WASIGO_SAFE_I! !WASIGO_V8_I! !WASIGO_SSL_I! ^
+  -DWASIGO_GOCVM=1 !WASIGO_CHROME_D! !WASIGO_WOW_D! !WASIGO_SSL_D! -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID ^
   -lwasi-emulated-mman ^
-  -o "%OUTWASM%" "%GENCPP%" !WASIGO_WIN32_CC! !WASIGO_NIX_CC! !WASIGO_DROID_CC! !WASIGO_GOCOS_CC! !WASIGO_WOW_CC! !WASIGO_SAFE_CC! !WASIGO_V8_CC! !WASIGO_SSL_L!
+  -o "%OUTWASM%" "%GENCPP%" "%WASIGO_ROOT%\libc\goclibc.c" !WASIGO_WIN32_CC! !WASIGO_NIX_CC! !WASIGO_DROID_CC! !WASIGO_GOCOS_CC! !WASIGO_CHROME_CC! !WASIGO_WOW_CC! !WASIGO_SAFE_CC! !WASIGO_V8_CC! !WASIGO_SSL_L!
 if errorlevel 1 (
   echo wasigocvm clang++ failed
   exit /b 1

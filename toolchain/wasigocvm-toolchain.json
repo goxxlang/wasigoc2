@@ -1,0 +1,11 @@
+﻿{
+    "note":  "threads stamped true from existing Windows toolchain artifacts (libpthread + wasip1-threads); no WSL rebuild",
+    "exceptions":  true,
+    "wasi_sdk_ref":  "main",
+    "built_at":  "2026-09-14T16:54:50Z",
+    "threads":  true,
+    "name":  "wasigocvm",
+    "borrowed_triple":  "wasm32-wasip2",
+    "threads_triple":  "wasm32-wasip1-threads",
+    "product_define":  "WASIGO_GOCVM"
+}

@@ -1,7 +1,7 @@
 #ifndef WASMGOCOS_INCLUDE_GOCOS_GOCSHELL_HPP_
 #define WASMGOCOS_INCLUDE_GOCOS_GOCSHELL_HPP_
 
-// GocShell — occupancy console. Cmd/Pwsh hop CreateProcessW through
+// GocShell — console. Cmd/Pwsh hop CreateProcessW through
 // hv.k32. Not a builtin command table.
 
 inline std::string gocshell_trim(const char* a) {
@@ -60,14 +60,14 @@ inline std::string gocshell_prompt() {
 inline std::string gocshell_conhost() {
   if (gockrnl().shell == 1) {
     copy_field(gockrnl().title, sizeof(gockrnl().title), "Windows PowerShell");
-    return "Windows PowerShell — GocOS occupancy\r\n"
+    return "Windows PowerShell — GocOS\r\n"
            "Copyright (C) Microsoft Corporation. All rights reserved.\r\n\r\n";
   }
   std::string ver = gockrnl_version();
   if (ver.rfind("error:", 0) == 0) ver.clear();
   copy_field(gockrnl().title, sizeof(gockrnl().title), "Command Prompt");
   return std::string("Microsoft Windows [Version ") + ver +
-         "] — GocOS occupancy\r\n(c) Microsoft Corporation. All rights reserved.\r\n";
+         "]\r\n(c) Microsoft Corporation. All rights reserved.\r\n";
 }
 
 inline std::string gocshell_cmd(const char* line) {

@@ -21,7 +21,7 @@ No WSL found. Options:
   2) On Linux CI: ./toolchain/bootstrap.sh
   3) Copy a prebuilt WASIGO_TOOLCHAIN tree into $Root\toolchain\
 
-Until then wasigocvm.bat falls back to %USERPROFILE%\wasi-sdk (eh/ tree).
+Until then wasigocvm.bat uses go++\toolchain\ if present, else %USERPROFILE%\wasi-sdk.
 "@
   exit 1
 }
@@ -29,7 +29,7 @@ Until then wasigocvm.bat falls back to %USERPROFILE%\wasi-sdk (eh/ tree).
 $unixRoot = (wsl -e wslpath -a $Root).Trim()
 $args = @("./toolchain/bootstrap.sh", "--jobs", "$Jobs", "--ref", $Ref)
 Write-Host "[wasigocvm] wsl → $unixRoot ; $($args -join ' ')"
-Write-Host "[wasigocvm] source/build default to ~/wasigocvm-wasi-sdk-* (not /mnt/c)"
+Write-Host "[wasigocvm] ALL trees under go++/toolchain/ (src, build, sysroot, bin) — not ~/"
 if ($DryRun) { exit 0 }
 
 # Long build — stream output. LLVM clone+compile can take hours.

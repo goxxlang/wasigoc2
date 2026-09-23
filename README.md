@@ -25,7 +25,7 @@ compile.bat / wasigocvm.bat      -DWASIGO_GOCVM=1
     │                            WASMSafeSpace · WASMv8bindings
     ▼
 wasitime                         our runtime (wasmtime-shaped CLI)
-                                 wazeropkg interpreter, not Cranelift
+                                 wazgoc interpreter, not Cranelift
 ```
 
 `legacy.bat` remains for **stock wasip1 noeh** goldens only. That is not the product.
@@ -45,7 +45,7 @@ Wasigoc2 is the machine, not a compiler bump. The first `wasigoc` shipped a Go++
 | **Host ABI** | In-tree `WASMWin32/`, `WASMNix/`, `WASMDroid/` catalogs. Guest packages `stdlib/win32`, `stdlib/linux`, `stdlib/android`. Missing those three dirs is a build error. |
 | **Cage / CHPT** | In-tree `WASMSafeSpace/` (EPT/TPT) and `WASMv8bindings/` (cppgc + CHPT). Missing either is a build error. |
 | **Edge kernel** | In-tree `WASMGocOS/` + `stdlib/gocos` — GocKrnl / GocSys hop k32 and nix through `gocvm.Call("gocos")` |
-| **Engine** | `wasitime` — wasmtime-shaped `inspect` / `run` / `call` / `link`. Compile/run slot is `examples/wazeropkg` (Op stream in the cage), not Cranelift / LLVM / wazevo. |
+| **Engine** | `wasitime` — wasmtime-shaped `inspect` / `run` / `call` / `link`. Compile/run slot is `examples/wazgoc` (Op stream in the cage), not Cranelift / LLVM / wazevo. |
 | **Bytecode** | Hard fork of WASM 2: keep SIMD, bulk memory, reftypes, tail call, atomics, `try_table`. Cut Component Model, WIT, WASM GC (`0xfb` → `gc is oilpan`). |
 | **Load/call** | `examples/wasmbinpkg` (decode / peel-to-core), `examples/wasmloaderpkg` (load / run / call / link), `examples/safespacepkg` (cage / GIA / CPT/EPT/TPT), `examples/v8bindpkg` (CHPT) |
 | **Occupancy** | `os/exec` child on EPT/TPT/CHPT (`examples/forkexec`); `syscall.Getpid` in-module (`examples/getpid`); cmd occupancy (`examples/cmdterm`) |
@@ -157,7 +157,7 @@ wasitime <file.wasm>                 same as run
 | `examples/wasitime` | CLI |
 | `examples/wasmloaderpkg` | load / run / call / link |
 | `examples/wasmbinpkg` | decode; peel outer wrapper → nested core |
-| `examples/wazeropkg` | compile wasm → `Op[]` in the cage; interpret |
+| `examples/wazgoc` | compile wasm → `Op[]` in the cage; interpret |
 | `examples/safespacepkg` | cage, GIA, CPT/EPT/TPT |
 | `examples/v8bindpkg` | CHPT |
 
@@ -170,7 +170,7 @@ Not a vendor dump of tetratelabs/wazero. Not w2g. Not Wasmtime. Outer Component 
 * **Frontend:** Recursive-descent Go frontend with automatic semicolon insertion.
 * **Type identity:** Interned `go/types` (pointer equality) and matching C++ codegen — methods on defined types (`type Duration int64`), generic named types (`type Set[T any] struct`), named array/slice types, anonymous `interface{ M() }`, range-over-func.
 * **Modules & scope:** Packages as C++ namespaces; `go.mod` `replace` directives and `internal/` access rules.
-* **Standard library:** Builtins `fmt`, `errors`, `os`, `reflect`, `gocvm` plus compiled packages under `stdlib/` (public `go list std` minus `internal/`/`vendor/` and target-impossible APIs). Extensions: `win32`, `linux`, `android`, `gocos`, `unil`, `guac`, `ogchan`. On wasigocvm, `net`, `os/exec` (`LookPath` included), `os/user`, `syscall`, `crypto/tls`, and the catalog packages are in-module. [docs/stdlib.md](docs/stdlib.md).
+* **Standard library:** Builtins `fmt`, `errors`, `os`, `reflect`, `gocvm` plus compiled packages under `stdlib/` (public `go list std` minus `internal/`/`vendor/` and target-impossible APIs). Extensions: `win32`, `linux`, `android`, `gocos`, `unil`, `guac`, `ogchan`, `liveview`, `websocket`. On wasigocvm, `net`, `os/exec` (`LookPath` included), `os/user`, `syscall`, `crypto/tls`, and the catalog packages are in-module. [docs/stdlib.md](docs/stdlib.md).
 * **Concurrency:** Cooperative `go`/`chan`/`select` on C++20 coroutines. `Chan` matches Go's concurrent-use guarantee; `Map` panics on detected concurrent writes.
 * **GC:** Oilpan (`cppgc`) — `GarbageCollected<T>`, `Member<T>`, `Persistent<T>`, stop-the-world mark-sweep. CHPT names cppgc objects in the cage. Not a Go collector clone.
 * **TLS:** OpenSSL 3 wasm (`toolchain/openssl-wasm`), memory BIOs. Not Schannel.
@@ -196,11 +196,13 @@ Product-facing programs under `examples/` (stdlib goldens stay one-package-per-d
 | `gocospkg` | GocOS boot + `RtlGetVersion` |
 | `cmdterm` | occupy `cmd.exe` through GocOS + k32 |
 | `wasitime` | engine CLI |
-| `wasmloader` | load / call / inspect through wazeropkg |
+| `wasmloader` | load / call / inspect through wazgoc |
 | `safespace` | cage + EPT/TPT/CPT port |
 | `wteng` | wasmtime-shaped embedding smoke (product load is wasmloaderpkg) |
 | `electron` | Electron-shaped guest packed as a `unil` bundle |
 | `ogchan` | Open Graph document channel |
+| `liveviewpkg` | LiveView language: HTML+CSS+JS-events+templates as one `live` document |
+| `websocketpkg` | gorilla/websocket port (RFC 6455 frames, Upgrader, Dialer) |
 
 ---
 
@@ -236,7 +238,7 @@ WASMNix/             in-tree catalog + posix_host.hpp (required)
 WASMDroid/           in-tree catalog + bionic_host.hpp (required)
 examples/
   wasitime/          engine CLI
-  wazeropkg/         WASM 2 interpreter (Cranelift-slot)
+  wazgoc/         WASM 2 interpreter (Cranelift-slot)
   wasmbinpkg/        decode / peel-to-core
   wasmloaderpkg/     load / run / call / link
   safespacepkg/      cage + CPT/EPT/TPT
@@ -261,7 +263,7 @@ tests/               smoketest + wasm golden harness
 | [docs/architecture.md](docs/architecture.md) | wasigocvm: one Memory, EPT/TPT/CHPT, in-module libc |
 | [docs/wasigocvm.md](docs/wasigocvm.md) | product: sysroot, libc, wasitime — vs Bytecode Alliance |
 | [docs/wasm2-fork.md](docs/wasm2-fork.md) | WASM 2 hard fork: opcodes kept, Oilpan/cage instead of WASM GC |
-| [docs/wasitime.md](docs/wasitime.md) | engine: wasmtime-shaped CLI, wazeropkg interpreter |
+| [docs/wasitime.md](docs/wasitime.md) | engine: wasmtime-shaped CLI, wazgoc interpreter |
 | [docs/host-abi.md](docs/host-abi.md) | in-tree WASMWin32 / WASMNix / WASMDroid catalogs |
 | [docs/language.md](docs/language.md) | Go++ syntax, Rosetta, modules |
 | [docs/stdlib.md](docs/stdlib.md) | builtins, wasigocvm in-guest packages, n/a |

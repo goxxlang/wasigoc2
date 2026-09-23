@@ -192,6 +192,24 @@ if [[ ${#GOCOS_I[@]} -eq 0 ]]; then
   exit 2
 fi
 
+CHROME_I=()
+CHROME_CC=()
+CHROME_D=()
+CHROME_ROOT=""
+if [[ -f "${HOME}/WASMChrome/include/chrome/host.hpp" ]]; then
+  CHROME_ROOT="${HOME}/WASMChrome"
+elif [[ -f "$ROOT/WASMChrome/include/chrome/host.hpp" ]]; then
+  CHROME_ROOT="$ROOT/WASMChrome"
+elif [[ -f "$ROOT/../WASMChrome/include/chrome/host.hpp" ]]; then
+  CHROME_ROOT="$ROOT/../WASMChrome"
+fi
+if [[ -n "$CHROME_ROOT" ]]; then
+  CHROME_I=(-I "$CHROME_ROOT/include")
+  CHROME_D=(-DWASIGO_HAS_WASMCHROME=1)
+  CHROME_CC=("$CHROME_ROOT/src/catalog.cc" "$CHROME_ROOT/src/host.cc" "$CHROME_ROOT/src/webui_catalog.cc")
+  echo "[wasigocvm] WASMChrome mojom catalog"
+fi
+
 WOW_I=()
 WOW_CC=()
 WOW_D=()
@@ -316,7 +334,13 @@ if [[ -f "$STAMP" ]] && grep -Eq '"threads"[[:space:]]*:[[:space:]]*true' "$STAM
 fi
 
 echo "[wasigocvm] $CLANG ($TRIPLE)"
-"$CLANG" -O2 -std=c++20 \
+GOCLC_WRAP=()
+for sym in fopen fclose fread fwrite fflush fseek ftell fileno fdopen feof ferror clearerr rewind \
+  stat lstat fstat mkdir rmdir unlink remove rename access getcwd chdir \
+  opendir readdir closedir pipe dup dup2; do
+  GOCLC_WRAP+=("-Wl,--wrap=${sym}")
+done
+"$CLANG" -O2 -std=c++20 -fuse-ld=lld \
   -fexceptions -frtti \
   -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false \
   -nostdinc++ \
@@ -325,11 +349,12 @@ echo "[wasigocvm] $CLANG ($TRIPLE)"
   -isystem "$SYSROOT/include" \
   -L "$EH_LIB" -lc++ -lc++abi -lunwind \
   -Wl,--export=__indirect_function_table \
+  "${GOCLC_WRAP[@]}" \
   "${PTHREAD_FLAGS[@]}" \
-  -I "$GO_DIR" -I "$ROOT/src" "${WIN32_I[@]}" "${NIX_I[@]}" "${DROID_I[@]}" "${GOCOS_I[@]}" "${WOW_I[@]}" "${PE_I[@]}" "${SAFE_I[@]}" "${V8_I[@]}" "${SSL_I[@]}" \
-  -DWASIGO_GOCVM=1 "${WOW_D[@]}" "${SSL_D[@]}" -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID \
+  -I "$GO_DIR" -I "$ROOT/src" "${WIN32_I[@]}" "${NIX_I[@]}" "${DROID_I[@]}" "${GOCOS_I[@]}" "${CHROME_I[@]}" "${WOW_I[@]}" "${PE_I[@]}" "${SAFE_I[@]}" "${V8_I[@]}" "${SSL_I[@]}" \
+  -DWASIGO_GOCVM=1 "${CHROME_D[@]}" "${WOW_D[@]}" "${SSL_D[@]}" -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID \
   -lwasi-emulated-mman \
-  -o "$OUTWASM" "$GENCPP" "${WIN32_CC[@]}" "${NIX_CC[@]}" "${DROID_CC[@]}" "${GOCOS_CC[@]}" "${WOW_CC[@]}" "${SAFE_CC[@]}" "${V8_CC[@]}" "${SSL_L[@]}"
+  -o "$OUTWASM" "$GENCPP" "$ROOT/libc/goclibc.c" "${WIN32_CC[@]}" "${NIX_CC[@]}" "${DROID_CC[@]}" "${GOCOS_CC[@]}" "${CHROME_CC[@]}" "${WOW_CC[@]}" "${SAFE_CC[@]}" "${V8_CC[@]}" "${SSL_L[@]}"
 
 echo
 echo "wasm: $OUTWASM"

@@ -1,6 +1,6 @@
 // In-guest libc dispatch for gocvm.Call. No companion host: syscall,
 // os.user, win32, linux/wsl/nix, android/binder/kvm, gocos,
-// gocdesk, kill, and exec stay in this module. TLS is OpenSSL in
+// gocdesk, chrome, kill, and exec stay in this module. TLS is OpenSSL in
 // wasigocvm_tls.hpp, not Schannel / gocvm_host.
 #pragma once
 
@@ -42,6 +42,10 @@ extern "C" __attribute__((weak)) long gocvm_gettid(void) {
 #include "droid/catalog.h"
 #include "gocos/host.hpp"
 #include "gocos/catalog.h"
+#if defined(WASIGO_HAS_WASMCHROME) && WASIGO_HAS_WASMCHROME
+#include "chrome/host.hpp"
+#include "chrome/catalog.h"
+#endif
 
 namespace gocvm {
 
@@ -878,6 +882,22 @@ inline bool wasigocvm_try_any_catalog(const std::string& api, const std::string&
   return false;
 }
 
+inline bool wasigocvm_try_chrome(const std::string& topic, const std::string& payload,
+                                 std::string* reply) {
+#if defined(WASIGO_HAS_WASMCHROME) && WASIGO_HAS_WASMCHROME
+  if (topic != "chrome") return false;
+  std::string api, rest;
+  wasigocvm_split1f(payload, &api, &rest);
+  *reply = wasmchrome::chrome_call(api.c_str(), rest.c_str());
+  return true;
+#else
+  (void)topic;
+  (void)payload;
+  (void)reply;
+  return false;
+#endif
+}
+
 inline bool wasigocvm_try_libc(const std::string& topic, const std::string& payload,
                                std::string* reply) {
   if (topic == "syscall") return wasigocvm_try_syscall(payload, reply);
@@ -887,6 +907,7 @@ inline bool wasigocvm_try_libc(const std::string& topic, const std::string& payl
   if (wasigocvm_try_droid(topic, payload, reply)) return true;
   if (wasigocvm_try_desktopengine(topic, payload, reply)) return true;
   if (wasigocvm_try_gocos(topic, payload, reply)) return true;
+  if (wasigocvm_try_chrome(topic, payload, reply)) return true;
   return wasigocvm_try_any_catalog(topic, payload, reply);
 }
 

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"../wazeropkg"
+	"../wazgoc"
 	"../wasmbinpkg"
 )
 
@@ -25,7 +25,7 @@ type envKV struct {
 }
 
 type Loader struct {
-	rt     *wazero.Runtime
+	rt     *wazgoc.Runtime
 	stdout io.Writer
 	stderr io.Writer
 	stdin  io.Reader
@@ -36,7 +36,7 @@ type Loader struct {
 
 func New() (*Loader, error) {
 	l := &Loader{}
-	l.rt = wazero.NewRuntime()
+	l.rt = wazgoc.NewRuntime()
 	l.stdout = nil
 	l.stderr = nil
 	l.stdin = bytes.NewReader(nil)
@@ -91,7 +91,7 @@ type Module struct {
 	Name     string
 	Path     string
 	Image    *wasmbin.Image
-	inst     *wazero.Module
+	inst     *wazgoc.Module
 	loader   *Loader
 	Exited   bool
 	ExitCode int
@@ -146,7 +146,7 @@ func (l *Loader) Load(name string, raw []byte, cfg LoadConfig) (*Module, error) 
 	if err2 != nil {
 		return nil, fmt.Errorf("compile %s: %s", name, err2.Error())
 	}
-	mc := wazero.NewModuleConfig().WithName(name)
+	mc := wazgoc.NewModuleConfig().WithName(name)
 	if l.stdout != nil {
 		mc = mc.WithStdout(l.stdout)
 	}

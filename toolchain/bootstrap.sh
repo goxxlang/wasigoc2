@@ -6,34 +6,24 @@
 #   ./toolchain/bootstrap.sh --jobs 8
 #   WASI_SDK_REF=wasi-sdk-33 ./toolchain/bootstrap.sh
 #
-# Installs under:
-#   toolchain/          (CMAKE_INSTALL_PREFIX)
-#   toolchain/sysroot/  (wasi-sysroot with eh libc++)
-#   toolchain/bin/      (clang wrappers)
+# All paths are under go++/toolchain/ (never $HOME by default):
+#   toolchain/                  CMAKE_INSTALL_PREFIX / WASIGO_TOOLCHAIN
+#   toolchain/sysroot/          wasi-sysroot (eh libc++)
+#   toolchain/bin/              clang wrappers
+#   toolchain/wasi-sdk-src/     WebAssembly/wasi-sdk checkout
+#   toolchain/wasi-sdk-build/   cmake build tree
 #
+# Optional overrides: WASIGO_WASI_SDK_SRC, WASIGO_WASI_SDK_BUILD, WASIGO_TOOLCHAIN.
 # This is a long build (LLVM + wasi-libc + libc++). Prefer CI or overnight WSL.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TC="$ROOT/toolchain"
-# Default source/build trees live under $HOME when the repo is on a slow
-# mount (WSL /mnt/c). Install prefix stays in-repo so Windows drivers see it.
-if [[ -z "${WASIGO_WASI_SDK_SRC:-}" ]]; then
-  case "$ROOT" in
-    /mnt/*) SRC="$HOME/wasigocvm-wasi-sdk-src" ;;
-    *)      SRC="$TC/wasi-sdk-src" ;;
-  esac
-else
-  SRC="$WASIGO_WASI_SDK_SRC"
-fi
-if [[ -z "${WASIGO_WASI_SDK_BUILD:-}" ]]; then
-  case "$ROOT" in
-    /mnt/*) BUILD="$HOME/wasigocvm-wasi-sdk-build" ;;
-    *)      BUILD="$TC/wasi-sdk-build" ;;
-  esac
-else
-  BUILD="$WASIGO_WASI_SDK_BUILD"
-fi
+# Everything stays under go++/toolchain/. Never default to $HOME.
+# Override only with WASIGO_WASI_SDK_SRC / WASIGO_WASI_SDK_BUILD if you
+# deliberately want trees elsewhere (e.g. a fast Linux disk).
+SRC="${WASIGO_WASI_SDK_SRC:-$TC/wasi-sdk-src}"
+BUILD="${WASIGO_WASI_SDK_BUILD:-$TC/wasi-sdk-build}"
 PREFIX="${WASIGO_TOOLCHAIN:-$TC}"
 REF="${WASI_SDK_REF:-main}"
 JOBS="${WASIGO_BOOTSTRAP_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
@@ -62,7 +52,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p "$TC"
-echo "[wasigocvm] bootstrap → prefix=$PREFIX jobs=$JOBS ref=$REF"
+echo "[wasigocvm] bootstrap → prefix=$PREFIX"
+echo "[wasigocvm]   src=$SRC"
+echo "[wasigocvm]   build=$BUILD"
+echo "[wasigocvm]   jobs=$JOBS ref=$REF"
 
 if [[ ! -d "$SRC/.git" ]]; then
   echo "[wasigocvm] cloning WebAssembly/wasi-sdk ($REF)…"

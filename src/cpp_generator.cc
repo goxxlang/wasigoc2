@@ -229,6 +229,25 @@ File BuildOsBuiltinFile() {
   write_file.results = results1(MakeNamedType("error"));
   f.funcs.push_back(std::move(write_file));
 
+  FuncDecl mkdir_f;
+  mkdir_f.name = "Mkdir";
+  mkdir_f.params.push_back(param("name", MakeNamedType("string")));
+  mkdir_f.results = results1(MakeNamedType("error"));
+  f.funcs.push_back(std::move(mkdir_f));
+
+  FuncDecl remove_f;
+  remove_f.name = "Remove";
+  remove_f.params.push_back(param("name", MakeNamedType("string")));
+  remove_f.results = results1(MakeNamedType("error"));
+  f.funcs.push_back(std::move(remove_f));
+
+  FuncDecl rename_f;
+  rename_f.name = "Rename";
+  rename_f.params.push_back(param("oldpath", MakeNamedType("string")));
+  rename_f.params.push_back(param("newpath", MakeNamedType("string")));
+  rename_f.results = results1(MakeNamedType("error"));
+  f.funcs.push_back(std::move(rename_f));
+
   auto method0 = [&](const char* recv_type, const char* name, std::unique_ptr<TypeNode> result) {
     FuncDecl m;
     m.has_receiver = true;
@@ -1945,7 +1964,9 @@ class Generator {
       if (sel->x->kind == ExprKind::Ident && PkgOf(sel->x->strval) == "os") {
         if (sel->strval == "Args") return SynthSlice(SynthNamed("string"));
         if (sel->strval == "Getenv") return SynthNamed("string");
-        if (sel->strval == "WriteFile") return SynthNamed("error");
+        if (sel->strval == "WriteFile" || sel->strval == "Mkdir" || sel->strval == "Remove" ||
+            sel->strval == "Rename")
+          return SynthNamed("error");
         // Open/Create/ReadFile are 2-result -- resolved through
         // ResolveCalledFunc's synthetic FuncDecl (BuildOsBuiltinFile) at
         // the `f, err := os.Open(...)` unpack site, not here.
@@ -3259,7 +3280,8 @@ class Generator {
           return "wasigo::os_getenv(" + EmitExpr(*e.args[0]) + ")";
         }
         if (sel->strval == "Open" || sel->strval == "Create" || sel->strval == "ReadFile" ||
-            sel->strval == "WriteFile" || sel->strval == "Stat" || sel->strval == "ReadDir") {
+            sel->strval == "WriteFile" || sel->strval == "Stat" || sel->strval == "ReadDir" ||
+            sel->strval == "Mkdir" || sel->strval == "Remove" || sel->strval == "Rename") {
           const FuncDecl* f = LookupFreeFunc(sel->strval, "os");
           std::string args = EmitArgsFor(f->params, e.args);
           std::string fn = sel->strval == "Open"       ? "os_open"
@@ -3267,11 +3289,14 @@ class Generator {
                             : sel->strval == "ReadFile"  ? "os_read_file"
                             : sel->strval == "WriteFile" ? "os_write_file"
                             : sel->strval == "Stat"      ? "os_stat"
+                            : sel->strval == "Mkdir"     ? "os_mkdir"
+                            : sel->strval == "Remove"    ? "os_remove"
+                            : sel->strval == "Rename"    ? "os_rename"
                                                           : "os_read_dir";
           return "wasigo::" + fn + "(" + args + ")";
         }
         Error("unsupported os function '" + sel->strval + "' (Args, Exit, Getenv, Open, Create, "
-              "ReadFile, WriteFile, Stat, ReadDir)");
+              "ReadFile, WriteFile, Stat, ReadDir, Mkdir, Remove, Rename)");
       }
       if (sel->x->kind == ExprKind::Ident && PkgOf(sel->x->strval) == "gocvm") {
         if (sel->strval == "Call") {

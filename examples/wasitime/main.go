@@ -2,7 +2,7 @@
 //
 // Command surface from ~/WASMLoader (inspect / run / call / link / example).
 // Engine is the ported ~/WASMLoader on the Go++ wazero interpreter
-// (examples/wazeropkg) + WASMSafeSpace + WASMv8Bindings-shaped CHPT.
+// (examples/wazgoc) + WASMSafeSpace + WASMv8Bindings-shaped CHPT.
 // If a file still has an outer wrapper, only the nested core module is loaded.
 package main
 

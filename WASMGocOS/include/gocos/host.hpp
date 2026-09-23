@@ -287,19 +287,10 @@ inline std::string gocos_call(const char* api, const char* args) {
   }
   if (eq(api, "Prompt") || eq(api, "GetPrompt")) return gocshell_prompt();
   if (eq(api, "Shell")) return gockrnl().shell == 1 ? "pwsh" : "cmd";
-  if (eq(api, "Occupy") || eq(api, "OccupyCmd") || eq(api, "occupyCmd")) {
+  if (eq(api, "CmdExample")) {
     gockrnl().shell = 0;
     gockrnl_create_process("cmd.exe", a[0] ? a : "cmd.exe", false);
     return gocshell_conhost();
-  }
-  if (eq(api, "OccupyCalc") || eq(api, "occupyCalc") || eq(api, "occupyPwsh")) {
-    const char* img = a[0] ? a : "calc.exe";
-    if (gocshell_is(img, "powershell") || gocshell_is(img, "pwsh")) {
-      gockrnl().shell = 1;
-      gockrnl_create_process("powershell.exe", "powershell.exe", false);
-      return gocshell_conhost();
-    }
-    return gockrnl_create_process(img, img, false);
   }
 
   if (hv::has_k32()) {
