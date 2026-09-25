@@ -1,5 +1,5 @@
-# The SDK (bin, sysroot, lib, share, clang-resource-dir) is part of this
-# repo. Do not ignore it.
+# bin, sysroot, lib, share, and clang-resource-dir are the only copy of
+# this custom toolchain. They are the SDK, not a local build cache.
 *.wasm
 *.tar.gz
 *.log

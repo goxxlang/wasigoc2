@@ -43,7 +43,9 @@ Thumbs.db
 .grok/
 .cursor/
 
-# wasigocvm SDK is in-tree. Global *.exe / *.a rules above do not apply to it.
+# Installed wasigocvm toolchain. This tree is the only copy of that custom
+# SDK — not a rebuildable byproduct of *.exe / *.a / *.o. Global artifact
+# rules above do not apply to it.
 !toolchain/bin/**
 !toolchain/sysroot/**
 !toolchain/lib/**
