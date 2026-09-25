@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Static hop for WASMJsLoader. COOP/COEP so SharedArrayBuffer works
-// if the guest was built with threads. Occupancy Calls loader.js;
+// if the guest was built with threads. The guest Calls loader.js;
 // this process only serves bytes.
 import http from "node:http";
 import fs from "node:fs";

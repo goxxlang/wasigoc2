@@ -9,7 +9,7 @@
 // CreateProcessW on native). LoadLibrary is the same hop as the rest of
 // kernel32 (PE maps through ~/WASMPELoader).
 // MainDLL (DllMain / TLS) runs on that hop via WHvRunVirtualProcessor.
-// Nix and unknown commands stay honest errors. One occupancy path:
+// Nix and unknown commands stay honest errors. One path:
 // wasi_host.hpp in this module.
 package win32
 

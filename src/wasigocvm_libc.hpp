@@ -20,8 +20,8 @@
 #include "wasigocvm_aspace.hpp"
 
 #if defined(__wasi__)
-// Weak: occupancy TUs (WSMOccpuyWin32 bridge/install) also include
-// runtime.hpp. One definition of the occupancy pid table is enough.
+// Weak: other TUs also include runtime.hpp. One definition of the
+// guest pid table is enough.
 extern "C" __attribute__((weak)) pid_t getpid(void) {
   return static_cast<pid_t>(gocvm::proc_self());
 }

@@ -126,34 +126,8 @@ func Shell() (string, error) {
 	return Call("Shell", "")
 }
 
-func OccupyCmd(image string) (string, error) {
-	if image == "" {
-		image = "cmd.exe"
-	}
-	return Call("OccupyCmd", image)
-}
-
-func OccupyCalc(image string) (string, error) {
-	if image == "" {
-		image = "calc.exe"
-	}
-	return Call("OccupyCalc", image)
-}
-
-func OccupyConsole() (string, error) {
-	return Call("Occupy", "")
-}
-
-func OccupyProcess() (string, error) {
-	return Call("CreateProcess", "")
-}
-
-func OccupyWasmtty() (string, error) {
-	return Call("Conhost", "")
-}
-
-func OccupyGocvm() (string, error) {
-	return Call("Boot", "")
+func Test() (string, error) {
+	return Call("Test", "")
 }
 
 // Compat aliases used by older guests. They still hop gocos → k32/nix.

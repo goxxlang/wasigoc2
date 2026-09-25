@@ -525,7 +525,7 @@ wasigo_add_golden(htmlpkg "htmlpkg/main.go"
   "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/html/html.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go")
-# Clean-room Open Graph document channel. Occupancy for this hop lives
+# Clean-room Open Graph document channel. The test for this hop lives
 # in ~/WASMWhatAppDoc; Electron hosts it later.
 wasigo_add_golden(ogchan "ogchan/main.go"
   "true\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\ntrue\\n"
@@ -932,7 +932,7 @@ wasigo_add_golden(structspkg "structspkg/main.go"
 wasigo_add_golden(syscallpkg "syscallpkg/main.go"
   "true\\ntrue\\nfalse\\nfalse\\ntrue\\ntrue\\ntrue\\ntrue\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/syscall/syscall.go")
-# getpid: no machine reports 1; wasigocvm is the occupancy table (first
+# getpid: no machine reports 1; wasigocvm is the guest process table (first
 # guest pid 1000), not WASI emulated getpid.
 wasigo_add_golden(getpid "getpid/main.go" "1\\n"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/syscall/syscall.go")

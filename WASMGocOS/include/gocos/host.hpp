@@ -7,8 +7,8 @@
 //   GocKrnl  — kernel
 //   GocSys   — subsystem
 //   GocDesk  — GPU desktop
-//   GocNix   — WSL occupancy
-//   GocShell — console occupancy
+//   GocNix   — WSL
+//   GocShell — console
 //
 // Every call is gocvm hypervision: k32 (~/WASMWin32) or nix (~/WASMNix).
 // Memory is the gocvm model (EPT vmem / VirtualAlloc / mmap).
@@ -156,7 +156,7 @@ inline std::string gocos_call(const char* api, const char* args) {
   if (!api || !api[0]) return err_msg("gocos needs an API name");
   const char* a = args ? args : "";
 
-  if (eq(api, "Boot") || eq(api, "GocOSBoot") || eq(api, "Occupancy") ||
+  if (eq(api, "Boot") || eq(api, "GocOSBoot") || eq(api, "Test") ||
       eq(api, "Init"))
     return gockrnl_boot();
   if (eq(api, "Halt") || eq(api, "GocOSHalt")) return gockrnl_halt();

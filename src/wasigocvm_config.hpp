@@ -36,7 +36,7 @@
 #endif
 
 // getpid: header comes from -D_WASI_EMULATED_GETPID. The symbol is
-// gocvm's occupancy table (wasigocvm_libc.hpp), not libwasi-emulated-getpid.
+// gocvm's process table (wasigocvm_libc.hpp), not libwasi-emulated-getpid.
 #ifndef _WASI_EMULATED_GETPID
 #define _WASI_EMULATED_GETPID 1
 #endif

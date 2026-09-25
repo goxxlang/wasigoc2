@@ -60,6 +60,21 @@ if "%GO_DIR:~-1%"=="\" set "GO_DIR=%GO_DIR:~0,-1%"
 set "GENCPP=%GO_DIR%\%GO_BASE%_gen.cpp"
 if not defined OUTWASM set "OUTWASM=%GO_DIR%\%GO_BASE%.wasm"
 
+rem WASMReact (ReactOS FreeLoader + ntoskrnl on GocOS): optional, like
+rem WASMChrome. Found before wasigoc runs so `import "reactos"` resolves
+rem to its Go++ facade. Its IPT comes from the WASMSafeSpace tree that
+rem has one (go++'s copy does not).
+set "WASIGO_REACT="
+if exist "%USERPROFILE%\WASMReact\include\reactos\dispatch.h" set "WASIGO_REACT=%USERPROFILE%\WASMReact"
+if not defined WASIGO_REACT if exist "%WASIGO_ROOT%\..\WASMReact\include\reactos\dispatch.h" for %%I in ("%WASIGO_ROOT%\..\WASMReact") do set "WASIGO_REACT=%%~fI"
+set "WASIGO_REACT_IPT="
+if exist "%USERPROFILE%\WASMVoodooCompile\WASMSafeSpace\src\sandbox\indirect-pointer-table.cc" set "WASIGO_REACT_IPT=%USERPROFILE%\WASMVoodooCompile\WASMSafeSpace"
+if defined WASIGO_REACT if not defined WASIGO_REACT_IPT (
+  echo warning: WASMReact needs WASMSafeSpace with indirect-pointer-table.cc ^(~/WASMVoodooCompile^); not linking it
+  set "WASIGO_REACT="
+)
+if defined WASIGO_REACT set WASIGOC_EXTRA=!WASIGOC_EXTRA! --import-dir="!WASIGO_REACT!\go"
+
 echo [wasigoc] %GO_ABS%
 "%WASIGOC_EXE%" "%GO_ABS%" -o "%GENCPP%" --out-dir "%GO_DIR%" %WASIGOC_EXTRA%
 if errorlevel 1 exit /b 1
@@ -111,6 +126,7 @@ if defined WASIGO_THREADS (
 
 echo [wasigocvm] %WASIGO_CLANG%
 echo             triple=%WASIGO_TRIPLE%  full libc++ + rtti + standard wasm EH
+echo             setjmp/longjmp on wasm EH ^(libsetjmp __c_longjmp^)
 if defined WASIGO_THREADS echo             threads=on  (std::thread fork, WASMSafeSpace cage, no wasm shared-memory)
 rem Resolve <go++>/src even if %~dp0 is toolchain\ (hardlink / odd invoke)
 set "WASIGO_SRC_INC="
@@ -143,7 +159,7 @@ if defined WASIGO_WIN32 (
   )
   if exist "!WASIGO_WIN32!\src\host_wasi.cc" (
     set WASIGO_WIN32_CC=!WASIGO_WIN32_CC! "!WASIGO_WIN32!\src\host_wasi.cc"
-    echo             WASMWin32 wasmwin32_call ^(occupyCalc CreateProcessW^)
+    echo             WASMWin32 wasmwin32_call ^(CreateProcessW^)
   )
 )
 if exist "%WASIGO_ROOT%\WASMNix\include\nix\posix_host.hpp" set "WASIGO_NIX=%WASIGO_ROOT%\WASMNix"
@@ -204,20 +220,6 @@ if defined WASIGO_CHROME (
   set WASIGO_CHROME_CC="!WASIGO_CHROME!\src\catalog.cc" "!WASIGO_CHROME!\src\host.cc" "!WASIGO_CHROME!\src\webui_catalog.cc"
   echo             -I "!WASIGO_CHROME!\include" ^(WASMChrome mojom catalog^)
 )
-set "WASIGO_WOW="
-if exist "%WASIGO_ROOT%\WSMOccpuyWin32\include\wow\occupancy.h" set "WASIGO_WOW=%WASIGO_ROOT%\WSMOccpuyWin32"
-if not defined WASIGO_WOW if exist "%USERPROFILE%\WSMOccpuyWin32\include\wow\occupancy.h" set "WASIGO_WOW=%USERPROFILE%\WSMOccpuyWin32"
-if not defined WASIGO_WOW if exist "%USERPROFILE%\WSMOccupyWin32\include\wow\occupancy.h" set "WASIGO_WOW=%USERPROFILE%\WSMOccupyWin32"
-if not defined WASIGO_WOW if exist "%WASIGO_ROOT%\..\WSMOccpuyWin32\include\wow\occupancy.h" for %%I in ("%WASIGO_ROOT%\..\WSMOccpuyWin32") do set "WASIGO_WOW=%%~fI"
-set "WASIGO_WOW_I="
-set "WASIGO_WOW_CC="
-set "WASIGO_WOW_D="
-if defined WASIGO_WOW (
-  set WASIGO_WOW_I=-I "!WASIGO_WOW!\include"
-  set WASIGO_WOW_D=-DWOW_HAS_WIN32=1 -DWOW_HAS_GOCVM=1 -DWASIGO_GOCVM_BRIDGE=1
-  set WASIGO_WOW_CC="!WASIGO_WOW!\src\catalog\catalog.cc" "!WASIGO_WOW!\src\surface\surface.cc" "!WASIGO_WOW!\src\store\store.cc" "!WASIGO_WOW!\src\event\event.cc" "!WASIGO_WOW!\src\occupancy\occupancy.cc" "!WASIGO_WOW!\src\ipc\ipc.cc" "!WASIGO_WOW!\src\harness\harness.cc" "!WASIGO_WOW!\src\gocvm\bridge.cc" "!WASIGO_WOW!\src\gocvm\install.cc" "!WASIGO_WOW!\src\c\system.cc" "!WASIGO_WOW!\src\driver\driver.cc" "!WASIGO_WOW!\src\posix\posix.cc" "!WASIGO_WOW!\src\tty\tty.cc"
-  echo             -I "!WASIGO_WOW!\include" ^(WSMOccpuyWin32 occupyCmd / CreateProcessW^)
-)
 set "WASIGO_SAFE="
 if exist "%WASIGO_ROOT%\WASMSafeSpace\src\sandbox\sandbox.cc" set "WASIGO_SAFE=%WASIGO_ROOT%\WASMSafeSpace"
 if not defined WASIGO_SAFE (
@@ -267,10 +269,20 @@ if defined WASIGO_SSL_INC (
   set WASIGO_SSL_D=-DWASIGO_HAS_OPENSSL=1
   echo             OpenSSL wasm ^(WASMLime TlsTransport / memory BIO^)
 )
-set "GOCLC_WRAP=-Wl,--wrap=fopen -Wl,--wrap=fclose -Wl,--wrap=fread -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fseek -Wl,--wrap=ftell -Wl,--wrap=fileno -Wl,--wrap=fdopen -Wl,--wrap=feof -Wl,--wrap=ferror -Wl,--wrap=clearerr -Wl,--wrap=rewind -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=fstat -Wl,--wrap=mkdir -Wl,--wrap=rmdir -Wl,--wrap=unlink -Wl,--wrap=remove -Wl,--wrap=rename -Wl,--wrap=access -Wl,--wrap=getcwd -Wl,--wrap=chdir -Wl,--wrap=opendir -Wl,--wrap=readdir -Wl,--wrap=closedir -Wl,--wrap=pipe -Wl,--wrap=dup -Wl,--wrap=dup2"
+set "WASIGO_REACT_I="
+set "WASIGO_REACT_CC="
+set "WASIGO_REACT_D="
+if defined WASIGO_REACT (
+  set WASIGO_REACT_I=-I "!WASIGO_REACT!\include" -I "!WASIGO_REACT_IPT!"
+  set WASIGO_REACT_CC="!WASIGO_REACT!\src\unity.cc" "!WASIGO_REACT_IPT!\src\sandbox\indirect-pointer-table.cc"
+  set WASIGO_REACT_D=-DWASIGO_HAS_WASMREACT=1
+  echo             -I "!WASIGO_REACT!\include" ^(WASMReact ReactOS kernel on EPT/TPT/CHPT/IPT^)
+)
+set "GOCLC_WRAP=-Wl,--wrap=fopen -Wl,--wrap=fclose -Wl,--wrap=fread -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fseek -Wl,--wrap=ftell -Wl,--wrap=fseeko -Wl,--wrap=ftello -Wl,--wrap=fileno -Wl,--wrap=fdopen -Wl,--wrap=feof -Wl,--wrap=ferror -Wl,--wrap=clearerr -Wl,--wrap=rewind -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=fstat -Wl,--wrap=mkdir -Wl,--wrap=rmdir -Wl,--wrap=unlink -Wl,--wrap=remove -Wl,--wrap=rename -Wl,--wrap=access -Wl,--wrap=getcwd -Wl,--wrap=chdir -Wl,--wrap=opendir -Wl,--wrap=readdir -Wl,--wrap=closedir -Wl,--wrap=pipe -Wl,--wrap=dup -Wl,--wrap=dup2"
 "%WASIGO_CLANG%" -O2 -std=c++20 -fuse-ld=lld ^
   -fexceptions -frtti ^
   -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false ^
+  -mllvm -wasm-enable-sjlj ^
   -nostdinc++ ^
   -isystem "%EH_INC%" ^
   -isystem "%WASIGO_SYSROOT%\include\%WASIGO_TRIPLE%" ^
@@ -279,10 +291,10 @@ set "GOCLC_WRAP=-Wl,--wrap=fopen -Wl,--wrap=fclose -Wl,--wrap=fread -Wl,--wrap=f
   -Wl,--export=__indirect_function_table ^
   %GOCLC_WRAP% ^
   %WASIGO_PTHREAD_FLAGS% ^
-  -I "%GO_DIR%" -I "%WASIGO_SRC_INC%" !WASIGO_WIN32_I! !WASIGO_NIX_I! !WASIGO_DROID_I! !WASIGO_GOCOS_I! !WASIGO_CHROME_I! !WASIGO_WOW_I! !WASIGO_PE_I! !WASIGO_SAFE_I! !WASIGO_V8_I! !WASIGO_SSL_I! ^
-  -DWASIGO_GOCVM=1 !WASIGO_CHROME_D! !WASIGO_WOW_D! !WASIGO_SSL_D! -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID ^
-  -lwasi-emulated-mman ^
-  -o "%OUTWASM%" "%GENCPP%" "%WASIGO_ROOT%\libc\goclibc.c" !WASIGO_WIN32_CC! !WASIGO_NIX_CC! !WASIGO_DROID_CC! !WASIGO_GOCOS_CC! !WASIGO_CHROME_CC! !WASIGO_WOW_CC! !WASIGO_SAFE_CC! !WASIGO_V8_CC! !WASIGO_SSL_L!
+  -I "%GO_DIR%" -I "%WASIGO_SRC_INC%" !WASIGO_WIN32_I! !WASIGO_NIX_I! !WASIGO_DROID_I! !WASIGO_GOCOS_I! !WASIGO_CHROME_I! !WASIGO_PE_I! !WASIGO_SAFE_I! !WASIGO_V8_I! !WASIGO_SSL_I! !WASIGO_REACT_I! ^
+  -DWASIGO_GOCVM=1 !WASIGO_CHROME_D! !WASIGO_SSL_D! !WASIGO_REACT_D! -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID ^
+  -lwasi-emulated-mman -lsetjmp ^
+  -o "%OUTWASM%" "%GENCPP%" "%WASIGO_ROOT%\libc\goclibc.c" !WASIGO_WIN32_CC! !WASIGO_NIX_CC! !WASIGO_DROID_CC! !WASIGO_GOCOS_CC! !WASIGO_CHROME_CC! !WASIGO_SAFE_CC! !WASIGO_V8_CC! !WASIGO_REACT_CC! !WASIGO_SSL_L!
 if errorlevel 1 (
   echo wasigocvm clang++ failed
   exit /b 1

@@ -1,6 +1,6 @@
 # wasitime
 
-**wasitime is our engine** — the same *place* Cranelift occupies in
+**wasitime is our engine** — the same *place* Cranelift fills in
 Wasmtime, not a Cranelift port.
 
 Wasmtime: CLI (`wasmtime run` / `call` / `inspect`) → **Cranelift**

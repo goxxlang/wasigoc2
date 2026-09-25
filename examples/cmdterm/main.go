@@ -1,6 +1,6 @@
-// Command Prompt occupancy for wasigocvm. Native k32 (RtlGetVersion,
+// Command Prompt for wasigocvm. Native k32 (RtlGetVersion,
 // CreateProcessW) is compiled into this module — WASMJsLoader instantiates
-// the same wasm in the browser. Compilation security (wasm + COOP/COEP) is
+// the same wasm in the browser. Compilation (wasm + COOP/COEP) is
 // the boundary. Not a host bridge, not HTTP/xterm inside the guest.
 package main
 
@@ -30,14 +30,14 @@ func die(err error) {
 	writeOut(err.Error())
 }
 
-func occupy() {
+func start() {
 	_, err := gocos.Boot()
+	die(err)
+	_, err = gocos.Test()
 	die(err)
 	_, err = win32.RtlGetVersion()
 	die(err)
 	_, _, _, err = win32.CreateProcess("cmd.exe", "cmd.exe")
-	die(err)
-	_, err = gocos.OccupyCmd("cmd.exe")
 	die(err)
 }
 
@@ -84,7 +84,7 @@ func prompt() {
 }
 
 func main() {
-	occupy()
+	start()
 	banner, err := gocos.Conhost()
 	if err != nil {
 		ver, verr := win32.RtlGetVersion()

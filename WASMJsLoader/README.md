@@ -1,7 +1,7 @@
 # WASMJsLoader
 
 Browser load / instantiate / run / call for compiled `.wasm` (wasigocvm
-guests included). Occupancy **Calls** this hop. It does not rewrite
+guests included). The guest **Calls** this hop. It does not rewrite
 `~/WASMWin32`, `~/WASMLoader`, or the guest.
 
 Same command surface as `~/WASMLoader` / wasitime:
@@ -17,7 +17,7 @@ This file only supplies the host imports those modules already declare:
 `wasi_snapshot_preview1` (and `wasi_unstable` aliases) plus `env.log` /
 `env.abort` — the same `env` names `~/WASMLoader` `loader/host.go`
 exports. Packed string imports (`alloc` + JSON envelope) are optional
-callbacks occupancy can register; they are not a second Win32.
+callbacks a guest can register; they are not a second Win32.
 
 ## Use
 
@@ -51,5 +51,5 @@ await run(inst);
 - Not wazero / Wasmtime in the page (`~/WASMLoader` webui still POSTs
   to its Go server; this hop instantiates in the browser).
 - Not a rewrite of WASMWin32. `\x1f` protocol stays in the guest.
-- Not ART / PE / occupancy payload execution — those stay data in
-  their mappers. This runs the wasm occupancy already compiled.
+- Not ART / PE payload execution — those stay data in
+  their mappers. This runs the wasm already compiled.

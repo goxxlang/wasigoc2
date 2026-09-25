@@ -312,7 +312,7 @@ tests pass.
 
 `examples/forkexec` (`echo` / `true` / `false` / `uname`) is this path.
 
-One linear memory: isolation is the tables. The child occupies a
+One linear memory: isolation is the tables. The child takes a
 `std::thread` (`CreateProcessW` is that hop).
 
 ## TLS, net, libc — in the module
@@ -321,7 +321,7 @@ One linear memory: isolation is the tables. The child occupies a
 | --- | --- | --- |
 | Sockets | sysroot libc + `wasigocvm_net.hpp` `poll()` workers on the cooperative scheduler | WIT `wasi:sockets`, companion host |
 | TLS | OpenSSL 3.6.3 wasm (`toolchain/openssl-wasm` `libssl.a`) with memory BIOs, same shape as `WASMLime/` `TlsTransport` (`SSL_do_handshake`, SNI) | Schannel, native vcpkg mingw DLLs, `gocvm_host` |
-| mmap / getpid | mmap is cage linear memory (`-D_WASI_EMULATED_MMAN`); getpid is the occupancy table (not libwasi-emulated-getpid) | host pid, host `VirtualAlloc` |
+| mmap / getpid | mmap is cage linear memory (`-D_WASI_EMULATED_MMAN`); getpid is the guest process table (not libwasi-emulated-getpid) | host pid, host `VirtualAlloc` |
 | syscall / os.user / kill | `wasigocvm_libc.hpp` | host hop |
 | `.wasm` load/run/call | in-tree `WASMLoader/` (Go++ port `examples/wasmloaderpkg`) on the Go++ wazero interpreter (`examples/wazgoc`) + WASMSafeSpace + WASMv8Bindings CHPT | rewriting the guest as host applets; vendoring tetratelabs/wazero; w2g |
 

@@ -395,7 +395,7 @@ inline std::string attrs_ex(const char* path) {
          "\x1f" + std::to_string(static_cast<long long>(st.st_mtime));
 }
 
-inline const char* wsl_occupancy_line(const char* cmd) {
+inline const char* wsl_command_line(const char* cmd) {
   if (!cmd) return cmd;
   const char* p = std::strstr(cmd, " /c ");
   if (!p) p = std::strstr(cmd, " /C ");
@@ -411,7 +411,7 @@ inline std::string k32_nt_version();
 
 inline std::string wsl_exec(const char* cmd) {
   while (cmd && *cmd == ' ') ++cmd;
-  cmd = wsl_occupancy_line(cmd);
+  cmd = wsl_command_line(cmd);
   while (cmd && *cmd == ' ') ++cmd;
   if (!cmd || !cmd[0] || eq(cmd, "uname") || std::strncmp(cmd, "uname ", 6) == 0) {
     return fmt_uname();
@@ -427,7 +427,7 @@ inline std::string wsl_exec(const char* cmd) {
   if (eq(cmd, "id")) {
     return std::string("uid=0 gid=0 pid=") + std::to_string(static_cast<long>(getpid()));
   }
-  return err_msg("exec: not a WslExec line (wasigocvm CreateProcessW occupies images)");
+  return err_msg("exec: not a WslExec line (wasigocvm CreateProcessW runs images)");
 }
 
 inline std::string wasi_call(const char* api, const char* args);

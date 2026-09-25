@@ -139,7 +139,7 @@ if [[ -f "$ROOT/WASMWin32/include/win32/wasi_host.hpp" ]]; then
   fi
   if [[ -f "$ROOT/WASMWin32/src/host_wasi.cc" ]]; then
     WIN32_CC+=("$ROOT/WASMWin32/src/host_wasi.cc")
-    echo "[wasigocvm] WASMWin32 wasmwin32_call (occupyCalc CreateProcessW)"
+    echo "[wasigocvm] WASMWin32 wasmwin32_call (CreateProcessW)"
   fi
 fi
 
@@ -208,40 +208,6 @@ if [[ -n "$CHROME_ROOT" ]]; then
   CHROME_D=(-DWASIGO_HAS_WASMCHROME=1)
   CHROME_CC=("$CHROME_ROOT/src/catalog.cc" "$CHROME_ROOT/src/host.cc" "$CHROME_ROOT/src/webui_catalog.cc")
   echo "[wasigocvm] WASMChrome mojom catalog"
-fi
-
-WOW_I=()
-WOW_CC=()
-WOW_D=()
-WOW_ROOT=""
-if [[ -f "$ROOT/WSMOccpuyWin32/include/wow/occupancy.h" ]]; then
-  WOW_ROOT="$ROOT/WSMOccpuyWin32"
-elif [[ -f "${HOME}/WSMOccpuyWin32/include/wow/occupancy.h" ]]; then
-  WOW_ROOT="${HOME}/WSMOccpuyWin32"
-elif [[ -f "${HOME}/WSMOccupyWin32/include/wow/occupancy.h" ]]; then
-  WOW_ROOT="${HOME}/WSMOccupyWin32"
-elif [[ -f "$ROOT/../WSMOccpuyWin32/include/wow/occupancy.h" ]]; then
-  WOW_ROOT="$ROOT/../WSMOccpuyWin32"
-fi
-if [[ -n "$WOW_ROOT" ]]; then
-  WOW_I=(-I "$WOW_ROOT/include")
-  WOW_D=(-DWOW_HAS_WIN32=1 -DWOW_HAS_GOCVM=1 -DWASIGO_GOCVM_BRIDGE=1)
-  WOW_CC=(
-    "$WOW_ROOT/src/catalog/catalog.cc"
-    "$WOW_ROOT/src/surface/surface.cc"
-    "$WOW_ROOT/src/store/store.cc"
-    "$WOW_ROOT/src/event/event.cc"
-    "$WOW_ROOT/src/occupancy/occupancy.cc"
-    "$WOW_ROOT/src/ipc/ipc.cc"
-    "$WOW_ROOT/src/harness/harness.cc"
-    "$WOW_ROOT/src/gocvm/bridge.cc"
-    "$WOW_ROOT/src/gocvm/install.cc"
-    "$WOW_ROOT/src/c/system.cc"
-    "$WOW_ROOT/src/driver/driver.cc"
-    "$WOW_ROOT/src/posix/posix.cc"
-    "$WOW_ROOT/src/tty/tty.cc"
-  )
-  echo "[wasigocvm] WSMOccpuyWin32 occupyCmd / CreateProcessW"
 fi
 
 SAFE_I=()
@@ -335,7 +301,7 @@ fi
 
 echo "[wasigocvm] $CLANG ($TRIPLE)"
 GOCLC_WRAP=()
-for sym in fopen fclose fread fwrite fflush fseek ftell fileno fdopen feof ferror clearerr rewind \
+for sym in fopen fclose fread fwrite fflush fseek ftell fseeko ftello fileno fdopen feof ferror clearerr rewind \
   stat lstat fstat mkdir rmdir unlink remove rename access getcwd chdir \
   opendir readdir closedir pipe dup dup2; do
   GOCLC_WRAP+=("-Wl,--wrap=${sym}")
@@ -343,6 +309,7 @@ done
 "$CLANG" -O2 -std=c++20 -fuse-ld=lld \
   -fexceptions -frtti \
   -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false \
+  -mllvm -wasm-enable-sjlj \
   -nostdinc++ \
   -isystem "$EH_INC" \
   -isystem "$SYSROOT/include/$TRIPLE" \
@@ -351,10 +318,10 @@ done
   -Wl,--export=__indirect_function_table \
   "${GOCLC_WRAP[@]}" \
   "${PTHREAD_FLAGS[@]}" \
-  -I "$GO_DIR" -I "$ROOT/src" "${WIN32_I[@]}" "${NIX_I[@]}" "${DROID_I[@]}" "${GOCOS_I[@]}" "${CHROME_I[@]}" "${WOW_I[@]}" "${PE_I[@]}" "${SAFE_I[@]}" "${V8_I[@]}" "${SSL_I[@]}" \
-  -DWASIGO_GOCVM=1 "${CHROME_D[@]}" "${WOW_D[@]}" "${SSL_D[@]}" -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID \
-  -lwasi-emulated-mman \
-  -o "$OUTWASM" "$GENCPP" "$ROOT/libc/goclibc.c" "${WIN32_CC[@]}" "${NIX_CC[@]}" "${DROID_CC[@]}" "${GOCOS_CC[@]}" "${CHROME_CC[@]}" "${WOW_CC[@]}" "${SAFE_CC[@]}" "${V8_CC[@]}" "${SSL_L[@]}"
+  -I "$GO_DIR" -I "$ROOT/src" "${WIN32_I[@]}" "${NIX_I[@]}" "${DROID_I[@]}" "${GOCOS_I[@]}" "${CHROME_I[@]}" "${PE_I[@]}" "${SAFE_I[@]}" "${V8_I[@]}" "${SSL_I[@]}" \
+  -DWASIGO_GOCVM=1 "${CHROME_D[@]}" "${SSL_D[@]}" -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID \
+  -lwasi-emulated-mman -lsetjmp \
+  -o "$OUTWASM" "$GENCPP" "$ROOT/libc/goclibc.c" "${WIN32_CC[@]}" "${NIX_CC[@]}" "${DROID_CC[@]}" "${GOCOS_CC[@]}" "${CHROME_CC[@]}" "${SAFE_CC[@]}" "${V8_CC[@]}" "${SSL_L[@]}"
 
 echo
 echo "wasm: $OUTWASM"

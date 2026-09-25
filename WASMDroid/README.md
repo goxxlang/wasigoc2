@@ -13,7 +13,7 @@ handle/RAII shape come from the public AOSP catalogs:
 This is the Android counterpart of `~/WASMwin32` and `~/WASMnix`.
 Win32 projects `Windows.Win32.*`. Nix projects Linux man-pages on the
 WSL hop. This tree projects **Bionic + Binder + Android kernel** on
-the occupancy hop. WSL is not Android — the Windows host stays
+the Android hop. WSL is not Android — the Windows host stays
 in-module (optional `adb` is an honest extra when present).
 
 wasm32 cannot `ioctl(/dev/binder)` or `ioctl(/dev/kvm)`. Query APIs

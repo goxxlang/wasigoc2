@@ -134,7 +134,7 @@ inline std::string capture_cmd(const char* cmd) {
   (void)cmd;
   return err_msg("no exec on this hop");
 #else
-  // Host CLI extra (adb). Not an occupancy stand-in for Binder / KVM.
+  // Host CLI extra (adb). Not a stand-in for Binder / KVM.
   if (!cmd || !cmd[0]) return err_msg("empty command");
 #if defined(_WIN32)
   FILE* p = _popen(cmd, "r");

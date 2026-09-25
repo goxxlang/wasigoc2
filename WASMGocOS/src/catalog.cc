@@ -10,7 +10,7 @@ static const WasmGocOSApi kApis[] = {
     {"GocKrnl.Boot", "gockrnl", "Session"},
     {"GocKrnl.Boot", "gockrnl", "Station"},
     {"GocKrnl.Boot", "gockrnl", "Status"},
-    {"GocKrnl.Boot", "gockrnl", "Occupancy"},
+    {"GocKrnl.Boot", "gockrnl", "Test"},
     {"GocKrnl.Boot", "gockrnl", "Version"},
     {"GocKrnl.Proc", "gockrnl", "CreateProcess"},
     {"GocKrnl.Proc", "gockrnl", "OpenProcess"},

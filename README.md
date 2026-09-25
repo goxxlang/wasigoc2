@@ -48,9 +48,9 @@ Wasigoc2 is the machine, not a compiler bump. The first `wasigoc` shipped a Go++
 | **Engine** | `wasitime` — wasmtime-shaped `inspect` / `run` / `call` / `link`. Compile/run slot is `examples/wazgoc` (Op stream in the cage), not Cranelift / LLVM / wazevo. |
 | **Bytecode** | Hard fork of WASM 2: keep SIMD, bulk memory, reftypes, tail call, atomics, `try_table`. Cut Component Model, WIT, WASM GC (`0xfb` → `gc is oilpan`). |
 | **Load/call** | `examples/wasmbinpkg` (decode / peel-to-core), `examples/wasmloaderpkg` (load / run / call / link), `examples/safespacepkg` (cage / GIA / CPT/EPT/TPT), `examples/v8bindpkg` (CHPT) |
-| **Occupancy** | `os/exec` child on EPT/TPT/CHPT (`examples/forkexec`); `syscall.Getpid` in-module (`examples/getpid`); cmd occupancy (`examples/cmdterm`) |
+| **Test** | `os/exec` child on EPT/TPT/CHPT (`examples/forkexec`); `syscall.Getpid` in-module (`examples/getpid`); cmd through GocOS (`examples/cmdterm`) |
 
-Those sibling trees are now in this repo, loaded as-is (not rewritten): `WASMSafeSpace/`, `WASMv8bindings/`, `WASMGocOS/`, `WASMPELoader/`, `WASMLoader/`, `WASMLime/` (OpenSSL TlsTransport shape), `WASMJsLoader/`, `WSMOccpuyWin32/`.
+Those sibling trees are now in this repo, loaded as-is (not rewritten): `WASMSafeSpace/`, `WASMv8bindings/`, `WASMGocOS/`, `WASMPELoader/`, `WASMLoader/`, `WASMLime/` (OpenSSL TlsTransport shape), `WASMJsLoader/`.
 
 ---
 
@@ -141,7 +141,7 @@ Capability is a `catalog.cc` row plus `*_tables_ok()` (CHPT session, TPT process
 
 ## Engine (wasitime)
 
-`wasitime` sits in the same *place* Cranelift occupies in Wasmtime: CLI in, execute a module. It is an interpreter of this WASM 2 fork, not ISA codegen.
+`wasitime` sits in the same *place* Cranelift fills in Wasmtime: CLI in, execute a module. It is an interpreter of this WASM 2 fork, not ISA codegen.
 
 ```
 wasitime inspect <file.wasm>
@@ -194,7 +194,7 @@ Product-facing programs under `examples/` (stdlib goldens stay one-package-per-d
 | `linuxpkg` | WASMNix `getpid` / `uname` |
 | `droidpkg` | WASMDroid Bionic / API level |
 | `gocospkg` | GocOS boot + `RtlGetVersion` |
-| `cmdterm` | occupy `cmd.exe` through GocOS + k32 |
+| `cmdterm` | `cmd.exe` through GocOS + k32 |
 | `wasitime` | engine CLI |
 | `wasmloader` | load / call / inspect through wazgoc |
 | `safespace` | cage + EPT/TPT/CPT port |
@@ -243,7 +243,7 @@ examples/
   wasmloaderpkg/     load / run / call / link
   safespacepkg/      cage + CPT/EPT/TPT
   v8bindpkg/         CHPT
-  forkexec/ win32/   occupancy goldens
+  forkexec/ win32/   exec goldens
   linuxpkg/ droidpkg/ gocospkg/ cmdterm/
 compile.bat          default: wasigocvm machine
 wasigocvm.bat / .sh  same machine as compile.bat

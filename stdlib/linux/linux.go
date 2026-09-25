@@ -2,7 +2,7 @@
 // / POSIX names plus WSL Linux-side and Nix CLI. The session sits on
 // CHPT, process/thread on TPT, catalog on EPT. Query APIs the libc host
 // implements (getpid, uname, getcwd, …) run through
-// gocvm.Call("linux"|"wsl"|"nix", …) — wasmnix::posix_call. One occupancy
+// gocvm.Call("linux"|"wsl"|"nix", …) — wasmnix::posix_call. One
 // path: posix_host.hpp in this module.
 package linux
 

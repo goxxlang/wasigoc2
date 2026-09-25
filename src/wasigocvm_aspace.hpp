@@ -60,7 +60,7 @@
 
 namespace gocvm {
 
-// Occupancy process table. Not WASI emulated getpid (always 1), not the
+// Guest process table. Not WASI emulated getpid (always 1), not the
 // host Task Manager. First guest is pid 1000 / tid 1004 (Windows-like
 // stride). Exec children take the next ids.
 inline int& proc_next_id() {

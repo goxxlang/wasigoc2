@@ -1,6 +1,6 @@
-// Browser occupancy hop: load/instantiate/run/call compiled .wasm.
+// Browser hop: load/instantiate/run/call compiled .wasm.
 // Host imports match ~/WASMLoader loader/host.go (wasi_snapshot_preview1,
-// env.log, env.abort, optional packed string imports). Occupancy Calls
+// env.log, env.abort, optional packed string imports). The guest Calls
 // this; it does not rewrite ~/WASMWin32.
 
 export const ERRNO = {
@@ -299,7 +299,7 @@ const COMP_MAGIC = [0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00];
 
 // WASMMimicry wrapWASM: core v1 shell + custom section "unil" holding the
 // inner bytes (wasigocvm component). Browser sees version 1; peel recovers
-// the guest. Occupancy hop — does not retarget the toolchain.
+// the guest. Does not retarget the toolchain.
 export function wrapMimicryWasm(inner) {
   const payload = asU8(inner);
   const name = [0x75, 0x6e, 0x69, 0x6c]; // "unil"

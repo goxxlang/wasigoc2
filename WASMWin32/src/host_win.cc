@@ -244,7 +244,7 @@ std::unordered_map<HANDLE, DWORD>& LastIo() {
   return m;
 }
 
-// Occupancy CreateProcessW is real: the child is an actual OS process,
+// CreateProcessW is real: the child is an actual OS process,
 // not a wasi_k32 vthread. Its stdout/stderr must be piped back through
 // GetProcessOutput or the "upstream does the real work" half of the
 // edge kernel produces work nobody can see. Keyed by the process
@@ -1217,7 +1217,7 @@ extern "C" int wasmwin32_call(const char* api, const char* args, char* out,
     };
     if (gui(cmd.empty() ? app : cmd)) flags = 0;
     // Console commands (cmd.exe /c, powershell -Command, …) are the
-    // occupyCmd/occupyCalc terminal path — pipe their combined
+    // Console command path — pipe their combined
     // stdout+stderr so GetProcessOutput has real bytes to return. GUI
     // apps (calc.exe, notepad.exe with no /c) keep their own console
     // and are not redirected.

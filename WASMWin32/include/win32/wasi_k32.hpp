@@ -125,7 +125,7 @@ inline void k32_run_child(K32Proc* p, const std::string& cmd) {
     p->started = true;
   }
   // wasigocvm exec: vthread child. Oneshot cmd/pwsh lines are WslExec.
-  // Images (calc.exe, …) occupy through LoadLibraryW + WHP, not a
+  // Images (calc.exe, …) load through LoadLibraryW + WHP, not a
   // Bytecode Alliance "no exec" stub. p->pid is already carried out of
   // band by CreateProcessW's own pid\x1fhandle\x1fhandle reply and by
   // GetProcessId — GetProcessOutput must return the command's actual
@@ -2078,7 +2078,7 @@ inline std::string k32_nt_version() {
     while (e && *e == ' ') ++e;
     if (e && *e) return e;
   }
-  // Occupied ntdll. Not Wine 10.0.19041 and not an empty unbound.
+  // Guest ntdll version. Not Wine 10.0.19041 and not an empty unbound.
   return "10.0.26100";
 }
 
@@ -2115,7 +2115,7 @@ inline int k32_load_library(const char* path) {
 
 inline std::string k32_gocvm_exec(const std::string& cmd) {
   if (k32_cmd_oneshot(cmd)) {
-    const char* line = wsl_occupancy_line(cmd.c_str());
+    const char* line = wsl_command_line(cmd.c_str());
     while (line && *line == ' ') ++line;
     return wasi_call("WslExec", line ? line : "");
   }

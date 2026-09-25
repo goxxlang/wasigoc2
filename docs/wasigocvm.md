@@ -80,9 +80,11 @@ The guest talks **libc**, not a WIT world (`wasi:cli` / `wasi:sockets`).
 | Layer | Where |
 | --- | --- |
 | C library | sysroot wasi-libc (`unistd`, sockets, `stat`, `uname`, `getenv`) |
+| file times | `goclibc`'s `stat2`/`fstat2` (a 24-byte record ending in the modification time) fill `st_mtim`; `os.FileInfo.ModTime()` is a `time.Time` |
 | mmap | `-D_WASI_EMULATED_MMAN -lwasi-emulated-mman` — linear memory, the cage |
-| getpid | occupancy process table (`gocvm::proc_self`, first pid 1000). Header still needs `_WASI_EMULATED_GETPID`; we do not link libwasi-emulated-getpid |
+| getpid | guest process table (`gocvm::proc_self`, first pid 1000). Header still needs `_WASI_EMULATED_GETPID`; we do not link libwasi-emulated-getpid |
 | libc++ | sysroot `eh/` — exceptions, RTTI, standard WASM EH |
+| setjmp/longjmp | `-mllvm -wasm-enable-sjlj -lsetjmp` — lowered onto the same WASM EH: each `setjmp` is a `try_table` catching libsetjmp's `__c_longjmp` tag, each `longjmp` a `throw` of it |
 | Go++ libc gate | `src/wasigocvm_libc.hpp` — `gocvm.Call("syscall"\|"win32"\|"linux"\|"android")` stays in-guest |
 | Exec | `src/wasigocvm_exec.hpp` — child in EPT/TPT/CHPT, work via WASMWin32 `wasi_call` |
 | Net | `src/wasigocvm_net.hpp` — `poll()` on sysroot sockets, one cooperative scheduler |

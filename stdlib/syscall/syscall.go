@@ -1,7 +1,7 @@
 // Package syscall: Getpid/Getwd/Getenv/Environ/Chdir are win32metadata
 // names (`GetCurrentProcessId`, `GetCurrentDirectoryW`, …) via
 // gocvm.Call("win32", ...). Kill/Getppid stay the in-module libc
-// syscall topic. Getpid is the occupancy table (not WASI emulated
+// syscall topic. Getpid is the guest process table (not WASI emulated
 // getpid). Without a machine Getpid/Getppid report 1 and 0.
 package syscall
 

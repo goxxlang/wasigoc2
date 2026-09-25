@@ -1,4 +1,4 @@
-// Worker occupancy hop: instantiate cmdterm.wasm (wasigocvm) with
+// Worker hop: instantiate cmdterm.wasm (wasigocvm) with
 // xterm stdin on a SharedArrayBuffer. No host bridge — GocOS/Win32
 // are inside the module.
 import { instantiate, run } from "./loader.js";

@@ -3,7 +3,7 @@
 // sits on CHPT, process/thread on TPT, catalog and Binder root on EPT.
 // Query APIs the Bionic host implements (getpid, uname, properties, …)
 // run through gocvm.Call("android"|"binder"|"kvm", …) —
-// wasmdroid::bionic_call. One occupancy path: bionic_host.hpp in this module.
+// wasmdroid::bionic_call. One path: bionic_host.hpp in this module.
 package android
 
 import (

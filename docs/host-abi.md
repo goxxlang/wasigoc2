@@ -4,7 +4,7 @@
 gocvm — not WASI, not WIT, not a native/wasm split.** Guest Go++ talks
 `gocvm.Call(topic, payload)`. The machine requires EPT / TPT / CHPT to
 be bound, then dispatches to in-tree `WASMWin32/`, `WASMNix/`, and
-`WASMDroid/` **in this repo**. There is one occupancy path: in-module
+`WASMDroid/` **in this repo**. There is one in-module path:
 libc backends (`wasi_host.hpp` / `posix_host.hpp` / `bionic_host.hpp`).
 `host_win.cc` / `host_linux.cc` are not the ABI.
 
@@ -81,7 +81,7 @@ Win32Kernel / NixKernel / DroidKernel
 | Nix | `NixKernel` + session | process, thread | catalog |
 | Droid | `DroidKernel` + session | process, thread | catalog, Binder/ashmem/ion |
 
-`CreateProcessW` / `os/exec` is the same occupancy: cppgc `ExecChild`
+`CreateProcessW` / `os/exec` is the same hop: cppgc `ExecChild`
 on CHPT, parent on TPT, stdout on EPT, work through `wasi_call`
 (catalog basename or `WslExec`). Not `cmd.exe`, not a BusyBox table
 inside `exec.hpp`.
