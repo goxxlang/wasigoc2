@@ -128,8 +128,8 @@ Isolation is the handle. `table.Get` with the matching tag is the object; a hand
 | Tree | Guest package | `gocvm.Call` topic | Entry |
 | --- | --- | --- | --- |
 | `WASMWin32/` | `win32` | `win32` | `wasmwin32::wasi_call` |
-| `WASMNix/` | `linux` | `linux`, `wsl`, `nix` | `wasmnix::posix_call` |
-| `WASMDroid/` | `android` | `android`, `binder`, `kvm` | `wasmdroid::bionic_call` |
+| `WASMNix/` | `linux` | `linux`, `wsl`, `nix` | `wasmnix::wsl_call` |
+| `WASMDroid/` | `android` | `android`, `phonelink` | `wasmdroid::phonelink_call` |
 
 Capability is a `catalog.cc` row plus `*_tables_ok()` (CHPT session, TPT process/thread, EPT catalog). `CreateProcessW` / `os/exec` is a `std::thread` child named on those tables; work is `wasi_call`, not a BusyBox table and not a host `cmd.exe`. PE maps through `WASMPELoader/`; MainDLL/TLS is `WHvRunVirtualProcessor`.
 
@@ -234,8 +234,8 @@ stdlib/              Go++ standard library (ordinary .go)
   ogchan/ unil/ guac/
 toolchain/           our sysroot, OpenSSL wasm, wasigocvm stamp
 WASMWin32/           in-tree catalog + wasi_host.hpp (required)
-WASMNix/             in-tree catalog + posix_host.hpp (required)
-WASMDroid/           in-tree catalog + bionic_host.hpp (required)
+WASMNix/             WSL catalog + wsl.hpp (required)
+WASMDroid/           Phone Link catalog + phonelink.hpp (required)
 examples/
   wasitime/          engine CLI
   wazgoc/         WASM 2 interpreter (Cranelift-slot)

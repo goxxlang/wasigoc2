@@ -38,13 +38,16 @@ int main() {
 
   assert(n >= 220);
   bool saw_pid = false;
-  bool saw_create = false;
+  bool saw_create_w = false;
+  bool saw_create_a = false;
   for (int i = 0; i < n; i++) {
     if (std::strcmp(cat[i].name, "GetCurrentProcessId") == 0) saw_pid = true;
-    if (std::strcmp(cat[i].name, "CreateProcessW") == 0) saw_create = true;
+    if (std::strcmp(cat[i].name, "CreateProcessW") == 0) saw_create_w = true;
+    if (std::strcmp(cat[i].name, "CreateProcessA") == 0) saw_create_a = true;
   }
   assert(saw_pid);
-  assert(saw_create);
+  assert(saw_create_w);
+  assert(saw_create_a);
 
   assert(wasmwin32_call("GetTickCount", "", buf, sizeof(buf)) == 0);
   assert(std::strtoul(buf, nullptr, 10) != 0);
@@ -55,23 +58,26 @@ int main() {
 #else
     const char* cpargs = "true";
 #endif
-    assert(wasmwin32_call("CreateProcessW", cpargs, buf, sizeof(buf)) == 0);
-    std::string reply = buf;
-    auto p1 = reply.find('\x1f');
-    assert(p1 != std::string::npos);
-    auto p2 = reply.find('\x1f', p1 + 1);
-    assert(p2 != std::string::npos);
-    std::string ph = reply.substr(p1 + 1, p2 - p1 - 1);
-    std::string th = reply.substr(p2 + 1);
-    assert(!ph.empty());
-    std::string waitarg = ph + "\x1f" "5000";
-    assert(wasmwin32_call("WaitForSingleObject", waitarg.c_str(), buf, sizeof(buf)) == 0);
-    assert(std::strcmp(buf, "0") == 0);
-    assert(wasmwin32_call("GetExitCodeProcess", ph.c_str(), buf, sizeof(buf)) == 0);
-    assert(std::strtoul(buf, nullptr, 10) == 0);
-    assert(wasmwin32_call("CloseHandle", ph.c_str(), buf, sizeof(buf)) == 0);
-    if (th != ph) {
-      wasmwin32_call("CloseHandle", th.c_str(), buf, sizeof(buf));
+    const char* create_apis[] = {"CreateProcessW", "CreateProcessA"};
+    for (const char* create_api : create_apis) {
+      assert(wasmwin32_call(create_api, cpargs, buf, sizeof(buf)) == 0);
+      std::string reply = buf;
+      auto p1 = reply.find('\x1f');
+      assert(p1 != std::string::npos);
+      auto p2 = reply.find('\x1f', p1 + 1);
+      assert(p2 != std::string::npos);
+      std::string ph = reply.substr(p1 + 1, p2 - p1 - 1);
+      std::string th = reply.substr(p2 + 1);
+      assert(!ph.empty());
+      std::string waitarg = ph + "\x1f" "5000";
+      assert(wasmwin32_call("WaitForSingleObject", waitarg.c_str(), buf, sizeof(buf)) == 0);
+      assert(std::strcmp(buf, "0") == 0);
+      assert(wasmwin32_call("GetExitCodeProcess", ph.c_str(), buf, sizeof(buf)) == 0);
+      assert(std::strtoul(buf, nullptr, 10) == 0);
+      assert(wasmwin32_call("CloseHandle", ph.c_str(), buf, sizeof(buf)) == 0);
+      if (th != ph) {
+        wasmwin32_call("CloseHandle", th.c_str(), buf, sizeof(buf));
+      }
     }
   }
 

@@ -18,9 +18,15 @@ add_library(wasmwin32 STATIC
 )
 if(WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
   target_sources(wasmwin32 PRIVATE src/host_win.cc)
-  target_link_libraries(wasmwin32 PRIVATE advapi32 psapi user32 gdi32 ole32 oleaut32 ws2_32 bcrypt ncrypt crypt32 shell32 shlwapi winhttp iphlpapi version comctl32 wininet dnsapi secur32 dbghelp wintrust uxtheme dwmapi rpcrt4 setupapi cfgmgr32 netapi32 pdh wevtapi comdlg32)
+  target_link_libraries(wasmwin32 PRIVATE advapi32 psapi user32 gdi32 ole32 oleaut32 ws2_32 bcrypt ncrypt crypt32 shell32 shlwapi winhttp iphlpapi version comctl32 wininet dnsapi secur32 dbghelp wintrust uxtheme dwmapi rpcrt4 setupapi cfgmgr32 netapi32 pdh wevtapi comdlg32 normaliz)
 else()
   target_sources(wasmwin32 PRIVATE src/host_wasi.cc)
+  if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
+    # wasi_host.hpp #defines _WASI_EMULATED_GETPID itself (getpid, uname,
+    # etc.) -- link the sysroot's matching emulation lib, same pairing
+    # WASMHolePunch uses for _WASI_EMULATED_MMAN/-lwasi-emulated-mman.
+    target_link_libraries(wasmwin32 PUBLIC wasi-emulated-getpid)
+  endif()
 endif()
 set(WASMPELOADER_DIR "$ENV{USERPROFILE}/WASMPELoader")
 if(NOT EXISTS "${WASMPELOADER_DIR}/include/wasmpe/loader.hpp")

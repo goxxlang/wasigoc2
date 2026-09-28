@@ -3,14 +3,18 @@ package main
 import (
 	"fmt"
 	"linux"
+	"strings"
 )
 
 func main() {
-	pid, err := linux.Getpid()
+	_, err := linux.Install("Ubuntu")
 	fmt.Println(err == nil)
-	fmt.Println(pid > 0)
 
-	u, err2 := linux.Uname()
+	u, err2 := linux.Exec("", "uname")
 	fmt.Println(err2 == nil)
-	fmt.Println(len(u) > 0)
+	fmt.Println(strings.Contains(u, "microsoft-standard-WSL2"))
+
+	list, err3 := linux.List()
+	fmt.Println(err3 == nil)
+	fmt.Println(strings.Contains(list, "Ubuntu"))
 }

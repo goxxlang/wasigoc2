@@ -35,8 +35,8 @@ toolchain/sysroot                OUR sysroot (bootstrap.sh)
     ├─ WASMSafeSpace    cage + EPT/TPT (exec + Win32/Nix/Droid)
     ├─ WASMv8bindings   CHPT (exec child, Win32Kernel, NixKernel, DroidKernel)
     ├─ WASMWin32        catalog on EPT; process/thread on TPT
-    ├─ WASMNix          catalog on EPT; linux/wsl/nix posix_call
-    ├─ WASMDroid        catalog + Binder on EPT; android/binder/kvm bionic_call
+    ├─ WASMNix          catalog on EPT; linux/wsl/nix wsl_call
+    ├─ WASMDroid        Phone Link catalog on EPT; phonelink_call
     └─ WASMGocOS        catalog + GocDesk on EPT; GocKrnl / GocSys hop k32 / nix
     ▼
 wasitime                         WASMLoader + Go++ wazero interpreter + WASMSafeSpace

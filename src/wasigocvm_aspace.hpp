@@ -95,15 +95,24 @@ inline int proc_ppid() { return proc_self_slot().ppid; }
 inline int proc_tid() { return proc_self_slot().tid; }
 
 #if defined(WASIGO_HAS_WASMSAFESPACE)
+// A module that links a kernel (WASMGocOS) has one process cage, the one
+// its JIT and vCPU allocate from. Everything here lives there too, so
+// cppgc (which pages from Sandbox::current()) and these tables agree on
+// one cage. Any other module keeps its own.
+extern "C" __attribute__((weak)) v8::internal::Sandbox* wasmturbo_process_cage();
+
 inline v8::internal::Sandbox& aspace_cage() {
-  static v8::internal::Sandbox cage;
-  static bool ready = false;
-  if (!ready) {
-    cage.Initialize(8 * v8::internal::MB);
-    v8::internal::Sandbox::set_current(&cage);
-    ready = true;
-  }
-  return cage;
+  static v8::internal::Sandbox* current = [] {
+    v8::internal::Sandbox* c = wasmturbo_process_cage ? wasmturbo_process_cage() : nullptr;
+    if (c == nullptr) {
+      static v8::internal::Sandbox own;
+      own.Initialize(8 * v8::internal::MB);
+      c = &own;
+    }
+    v8::internal::Sandbox::set_current(c);
+    return c;
+  }();
+  return *current;
 }
 inline v8::internal::Sandbox& exec_cage() { return aspace_cage(); }
 #endif
@@ -191,7 +200,7 @@ constexpr v8::internal::ExternalPointerTag kDroidCatalogTag =
     static_cast<v8::internal::ExternalPointerTag>(
         static_cast<uint16_t>(
             v8::internal::ExternalPointerTag::kFirstManagedResourceTag) + 11);
-constexpr v8::internal::ExternalPointerTag kDroidBinderTag =
+constexpr v8::internal::ExternalPointerTag kDroidPhoneTag =
     static_cast<v8::internal::ExternalPointerTag>(
         static_cast<uint16_t>(
             v8::internal::ExternalPointerTag::kFirstManagedResourceTag) + 12);
@@ -209,13 +218,22 @@ constexpr v8::internal::ExternalPointerTag kGocOSVmemTag =
             v8::internal::ExternalPointerTag::kFirstManagedResourceTag) + 15);
 
 struct Aspace {
-  v8::internal::ExternalPointerTable ept;
-  v8::internal::TrustedPointerTable tpt;
-  cppgc::internal::CppHeapPointerTable chpt;
+  v8::internal::ExternalPointerTable& ept;
+  v8::internal::TrustedPointerTable& tpt;
+  cppgc::internal::CppHeapPointerTable& chpt;
 };
 
+// EPT and TPT are the Sandbox's own tables. CHPT is the one table
+// registered on that same cage. This is the browser layout for a single
+// cage: field access goes through Sandbox::current(), not a side static.
 inline Aspace& aspace() {
-  static Aspace tables;
+  auto& cage = aspace_cage();
+  static cppgc::internal::CppHeapPointerTable chpt;
+  if (cage.cpp_heap_pointer_table() != &chpt) {
+    cage.RegisterCppHeapPointerTable(&chpt);
+  }
+  static Aspace tables{cage.external_pointer_table(), cage.trusted_pointer_table(),
+                       chpt};
   return tables;
 }
 inline Aspace& exec_aspace() { return aspace(); }
@@ -229,21 +247,50 @@ inline Aspace& exec_aspace() { return aspace(); }
 // pool was never ported here. So this table IS the job runner: same
 // bounded-handle-map shape as ExecTable (wasigocvm_exec.hpp), backing a
 // real Platform that Heap::Create() actually holds instead of nullptr.
-class TableJobDelegate final : public cppgc::JobDelegate {
- public:
-  explicit TableJobDelegate(std::atomic<bool>* cancelled) : cancelled_(cancelled) {}
-  bool ShouldYield() override { return cancelled_->load(std::memory_order_relaxed); }
-
- private:
-  std::atomic<bool>* cancelled_;
-};
-
 struct JobEntry {
   std::unique_ptr<cppgc::JobTask> task;
+  std::mutex mu;  // guards workers
   std::vector<std::thread> workers;
   std::atomic<bool> cancelled{false};
   std::atomic<int> running{0};
 };
+
+// Starts workers until the job has as many as it asks for. Post calls
+// it once; a NotifyConcurrencyIncrease (the task has more work than its
+// workers) calls it again, as real V8's worker pool re-queries then.
+inline void job_grow(JobEntry* e);
+
+class TableJobDelegate final : public cppgc::JobDelegate {
+ public:
+  TableJobDelegate(JobEntry* entry, uint8_t id) : entry_(entry), id_(id) {}
+  bool ShouldYield() override { return entry_->cancelled.load(std::memory_order_relaxed); }
+  void NotifyConcurrencyIncrease() override { job_grow(entry_); }
+  uint8_t GetTaskId() override { return id_; }
+  // Workers are their own threads; Join only waits and runs no task work.
+  bool IsJoiningThread() const override { return false; }
+
+ private:
+  JobEntry* entry_;
+  uint8_t id_;
+};
+
+inline void job_grow(JobEntry* e) {
+  if (e->cancelled.load(std::memory_order_relaxed)) return;
+  std::lock_guard<std::mutex> lk(e->mu);
+  size_t have = static_cast<size_t>(e->running.load(std::memory_order_relaxed));
+  size_t want = e->task->GetMaxConcurrency(have);
+  if (want == 0 && e->workers.empty()) want = 1;
+  while (have < want) {
+    uint8_t id = static_cast<uint8_t>(e->workers.size());
+    ++e->running;
+    e->workers.emplace_back([e, id]() {
+      TableJobDelegate delegate(e, id);
+      e->task->Run(&delegate);
+      --e->running;
+    });
+    ++have;
+  }
+}
 
 class JobTable {
  public:
@@ -253,19 +300,8 @@ class JobTable {
     auto entry = std::make_unique<JobEntry>();
     JobEntry* raw = entry.get();
     raw->task = std::move(task);
-    // No NotifyConcurrencyIncrease on this port's JobHandle: concurrency is
-    // fixed at post time, not re-queried while the job runs.
-    size_t n = raw->task->GetMaxConcurrency(std::thread::hardware_concurrency());
-    if (n == 0) n = 1;
-    raw->running = static_cast<int>(n);
-    for (size_t i = 0; i < n; ++i) {
-      raw->workers.emplace_back([raw]() {
-        TableJobDelegate delegate(&raw->cancelled);
-        raw->task->Run(&delegate);
-        --raw->running;
-      });
-    }
     jobs_[h] = std::move(entry);
+    job_grow(raw);
     return h;
   }
 
@@ -278,14 +314,40 @@ class JobTable {
   void join(uint64_t h) {
     JobEntry* e = get(h);
     if (!e) return;
-    for (auto& t : e->workers) {
-      if (t.joinable()) t.join();
+    // A worker may start another while this waits; wait for those too.
+    for (;;) {
+      std::thread t;
+      {
+        std::lock_guard<std::mutex> lk(e->mu);
+        for (auto& w : e->workers) {
+          if (w.joinable()) {
+            t = std::move(w);
+            break;
+          }
+        }
+      }
+      if (!t.joinable()) return;
+      t.join();
     }
   }
 
   void cancel(uint64_t h) {
     JobEntry* e = get(h);
     if (e) e->cancelled.store(true, std::memory_order_relaxed);
+  }
+
+  void grow(uint64_t h) {
+    if (JobEntry* e = get(h)) job_grow(e);
+  }
+
+  // Cancel, and let the workers end on their own.
+  void detach(uint64_t h) {
+    JobEntry* e = get(h);
+    if (!e) return;
+    e->cancelled.store(true, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(e->mu);
+    for (auto& w : e->workers)
+      if (w.joinable()) w.detach();
   }
 
   bool running(uint64_t h) {
@@ -307,15 +369,31 @@ inline JobTable& job_table() {
 class TableJobHandle final : public cppgc::JobHandle {
  public:
   explicit TableJobHandle(uint64_t h) : handle_(h) {}
-  void Join() override { job_table().join(handle_); }
+  ~TableJobHandle() override {
+    if (valid_) Join();
+  }
+  void NotifyConcurrencyIncrease() override {
+    if (valid_) job_table().grow(handle_);
+  }
+  void Join() override {
+    job_table().join(handle_);
+    valid_ = false;
+  }
   void Cancel() override {
     job_table().cancel(handle_);
-    job_table().join(handle_);
+    Join();
   }
-  bool IsRunning() override { return job_table().running(handle_); }
+  // Cancelled; the workers finish on their own, and this does not wait.
+  void CancelAndDetach() override {
+    job_table().detach(handle_);
+    valid_ = false;
+  }
+  bool IsActive() override { return job_table().running(handle_); }
+  bool IsValid() override { return valid_; }
 
  private:
   uint64_t handle_;
+  bool valid_ = true;
 };
 
 class Platform final : public cppgc::Platform {

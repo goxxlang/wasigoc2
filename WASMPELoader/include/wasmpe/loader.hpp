@@ -58,6 +58,7 @@ struct Section {
 struct Image {
   void* base = nullptr;
   size_t size = 0;
+  uint64_t reloc_base = 0;  // the VA the image was relocated to (see map's want_base)
   int pe64 = 0;
   unsigned machine = 0;
   unsigned entry_rva = 0;
@@ -133,7 +134,12 @@ inline std::string cstr(const unsigned char* img, uint32_t rva, uint32_t cap, ui
   return b;
 }
 
-inline bool map(const void* file, size_t n, Image* out, Resolve resolve, void* ctx) {
+// want_base != 0 relocates the image to that virtual address instead of to
+// the host buffer's address, so a 32-bit software interpreter can run it at
+// a fixed VA (see ~/WASMGocOS/peinterp). 0 keeps the legacy host-address
+// relocation the native WHv/LoadLibrary path uses.
+inline bool map(const void* file, size_t n, Image* out, Resolve resolve, void* ctx,
+                uint64_t want_base = 0) {
   if (out) *out = Image{};
   if (!out) return false;
   if (!file || n < 64) {
@@ -238,7 +244,8 @@ inline bool map(const void* file, size_t n, Image* out, Resolve resolve, void* c
   }
 
   uint32_t rel_rva = out->dirs_rva[kReloc], rel_sz = out->dirs_sz[kReloc];
-  uintptr_t mapped = reinterpret_cast<uintptr_t>(img);
+  uint64_t mapped = want_base ? want_base : reinterpret_cast<uintptr_t>(img);
+  out->reloc_base = mapped;
   int64_t delta = static_cast<int64_t>(mapped) - static_cast<int64_t>(image_base);
   if (delta && rel_rva && rel_sz) {
     unsigned char* rel = inimg(rel_rva, rel_sz);

@@ -44,13 +44,33 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "src/base/logging.h"
+#include "src/sandbox/external-pointer-table.h"
+#include "src/sandbox/trusted-pointer-table.h"
 #include "v8-internal.h"
+
+namespace cppgc {
+namespace internal {
+class CppHeapPointerTable;
+}
+}  // namespace cppgc
 
 namespace v8 {
 namespace internal {
 
+// Releases a cage's memory the way Sandbox::Initialize obtained it.
+struct SandboxBackingDeleter {
+  size_t size;
+  void operator()(uint8_t* p) const;
+};
+
+// Browser cppgc keeps these tables on the cage the isolate is running in:
+// the TrustedPointerTable is owned by the Sandbox, and the isolate's
+// ExternalPointerTable and CppHeapPointerTable are the ones Read/Write of
+// sandboxed fields go through. This port has one cage, so EPT and TPT are
+// members and the CHPT is registered onto that same Sandbox.
 class Sandbox final {
  public:
   // Real V8 aims for ~1TB (or a scaled-down size on 32-bit hosts). A
@@ -89,28 +109,95 @@ class Sandbox final {
   }
 
   // This port's stand-in for real V8's page_allocator()/
-  // in_sandbox_allocator(): a plain bump allocator over the cage, for
-  // objects (e.g. an ArrayBuffer-style backing store) that must
+  // in_sandbox_allocator(): the cage's own allocator, for objects (e.g. an
+  // ArrayBuffer-style backing store, or any other data that must
   // demonstrably live inside the cage rather than just be validated
-  // against it. No Free() -- a bump allocator with no reclamation, the
-  // same scope real cppgc's own allocator (../WASMv8bindings/src/heap/
-  // internal/) actually needed a real freelist for and this doesn't: nothing
-  // in this port's own tests needs to reclaim in-cage bump allocations.
+  // against it) whose lifetime isn't tied to the whole Sandbox. First-fit
+  // over free_list_ (address-sorted, coalesced on Free()); falls back to
+  // bump-allocating fresh space from bump_offset_ when nothing in the free
+  // list fits. A real allocator, not a toy: this cage backs high-churn
+  // allocations too (e.g. WASMHolePunch's per-message wire-byte buffers),
+  // so permanently consuming cage space per allocation and never
+  // reclaiming it was a real gap, not an intentional simplification.
   void* Allocate(size_t size, size_t alignment = alignof(std::max_align_t));
+  // Same, but a cage with no room left is nullptr, like a failed malloc,
+  // instead of a CHECK-fail -- for a caller that can refuse the request
+  // (a WASM memory.grow returns -1).
+  void* TryAllocate(size_t size, size_t alignment = alignof(std::max_align_t));
+  // Returns [ptr, ptr+size) to the free list, coalescing with any
+  // address-adjacent free block. `ptr` must be a value this Allocate()
+  // returned (with the same `size`) and not already freed -- same
+  // contract as a normal allocator; there's no way to validate that from
+  // inside the cage's own bookkeeping alone.
+  void Free(void* ptr, size_t size);
 
   // The single active sandbox. Real V8 keeps one per-thread (or one
   // process-wide default); this port keeps exactly one, process-wide,
   // matching its single-threaded wasm32-wasip1 target.
+  // The cage's own tables. Callers allocate entries here; they do not
+  // construct a second ExternalPointerTable or TrustedPointerTable.
+  ExternalPointerTable& external_pointer_table() { return external_pointer_table_; }
+  const ExternalPointerTable& external_pointer_table() const {
+    return external_pointer_table_;
+  }
+  TrustedPointerTable& trusted_pointer_table() { return trusted_pointer_table_; }
+  const TrustedPointerTable& trusted_pointer_table() const {
+    return trusted_pointer_table_;
+  }
+
+  // One CppHeapPointerTable for this cage, registered by the aspace when
+  // cppgc is present. The browser stores this on the isolate; the lookup
+  // is still "the table for the current sandbox."
+  void RegisterCppHeapPointerTable(cppgc::internal::CppHeapPointerTable* table) {
+    cpp_heap_pointer_table_ = table;
+  }
+  cppgc::internal::CppHeapPointerTable* cpp_heap_pointer_table() const {
+    return cpp_heap_pointer_table_;
+  }
+
   static Sandbox* current() { return current_; }
   static void set_current(Sandbox* sandbox) { current_ = sandbox; }
 
  private:
+  struct FreeBlock {
+    size_t offset;
+    size_t size;
+  };
+
+  // Tries to satisfy `size`/`alignment` from free_list_ (first-fit,
+  // splitting off any leftover head/tail back into the list). Returns
+  // nullptr if nothing free is big enough, same as a failed malloc --
+  // Allocate() falls back to the bump path on that, not a CHECK-fail.
+  void* AllocateFromFreeList(size_t size, size_t alignment);
+
   Address base_ = kNullAddress;
   Address end_ = kNullAddress;
   size_t size_ = 0;
-  std::unique_ptr<uint8_t[]> backing_;
+  // The cage's memory. Zeroed, as it always was, but on a native host the
+  // zeros are the OS's demand-zero pages (VirtualAlloc / mmap) rather
+  // than written up front, so a large cage costs only what is touched --
+  // and on Windows, commit charge only for what was handed out
+  // (committed_).
+  std::unique_ptr<uint8_t[], SandboxBackingDeleter> backing_;
   size_t bump_offset_ = 0;
+  // Windows: the cage is reserved address space, and [0, committed_) of it
+  // is committed. The bump path commits in kCommitStep units as it grows,
+  // so commit charge follows what was ever handed out, not the cage size.
+  // Everywhere else the whole cage is usable from Initialize and this is
+  // the size.
+  size_t committed_ = 0;
+  static constexpr size_t kCommitStep = 64 * 1024;
+  // Makes [0, end) usable. False when the OS refuses the commit.
+  bool CommitTo(size_t end);
   bool initialized_ = false;
+  // Address-sorted, coalesced. A vector + linear scan is the right amount
+  // of "real" here: this cage tops out at kDefaultSize-scale (tens of MB)
+  // of modest-count allocations, not a general-purpose process heap --
+  // see this class's own file comment on what's real vs. simplified.
+  std::vector<FreeBlock> free_list_;
+  ExternalPointerTable external_pointer_table_;
+  TrustedPointerTable trusted_pointer_table_;
+  cppgc::internal::CppHeapPointerTable* cpp_heap_pointer_table_ = nullptr;
 
   static Sandbox* current_;
 };

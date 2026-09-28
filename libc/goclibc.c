@@ -8,6 +8,7 @@
  */
 #include <dirent.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,41 +28,53 @@ enum {
   GOCL_APPEND = 16
 };
 
+/* The kernel's files. A module that links the kernel (WASMGocOS, built
+ * with GOCLIBC_IN_KERNEL) answers these calls itself; any other module
+ * imports them from its host. */
+#if defined(GOCLIBC_IN_KERNEL)
+#define GOCLIBC_HOST(name)
+#else
+#define GOCLIBC_HOST(name) __attribute__((import_module("goclibc"), import_name(name)))
+#endif
+
 enum { kGMax = 128, kGMagic = 0x474F434Cu, kGHost = 1, kGPipe = 2 };
 
-__attribute__((import_module("goclibc"), import_name("open")))
+GOCLIBC_HOST("open")
 extern int goclibc_host_open(int path, int path_len, int flags);
-__attribute__((import_module("goclibc"), import_name("read")))
+GOCLIBC_HOST("read")
 extern int goclibc_host_read(int fd, int ptr, int n);
-__attribute__((import_module("goclibc"), import_name("write")))
+GOCLIBC_HOST("write")
 extern int goclibc_host_write(int fd, int ptr, int n);
-__attribute__((import_module("goclibc"), import_name("close")))
+GOCLIBC_HOST("close")
 extern int goclibc_host_close(int fd);
-__attribute__((import_module("goclibc"), import_name("seek")))
+GOCLIBC_HOST("seek")
 extern int goclibc_host_seek(int fd, int off, int whence);
-__attribute__((import_module("goclibc"), import_name("flush")))
+GOCLIBC_HOST("flush")
 extern int goclibc_host_flush(int fd);
-__attribute__((import_module("goclibc"), import_name("stat")))
+/* stat2/fstat2: a 24-byte record, mode (u32) at 0, size (u64) at 8, and
+ * the modification time (i64 ns since the Unix epoch, 0 for none) at 16.
+ * The kernel keeps the 16-byte stat/fstat for guests built before. */
+GOCLIBC_HOST("stat2")
 extern int goclibc_host_stat(int path, int path_len, int out);
-__attribute__((import_module("goclibc"), import_name("fstat")))
+GOCLIBC_HOST("fstat2")
 extern int goclibc_host_fstat(int fd, int out);
-__attribute__((import_module("goclibc"), import_name("mkdir")))
+GOCLIBC_HOST("mkdir")
 extern int goclibc_host_mkdir(int path, int path_len);
-__attribute__((import_module("goclibc"), import_name("unlink")))
+GOCLIBC_HOST("unlink")
 extern int goclibc_host_unlink(int path, int path_len);
-__attribute__((import_module("goclibc"), import_name("rmdir")))
+GOCLIBC_HOST("rmdir")
 extern int goclibc_host_rmdir(int path, int path_len);
-__attribute__((import_module("goclibc"), import_name("rename")))
+GOCLIBC_HOST("rename")
 extern int goclibc_host_rename(int oldp, int oldn, int newp, int newn);
-__attribute__((import_module("goclibc"), import_name("access")))
+GOCLIBC_HOST("access")
 extern int goclibc_host_access(int path, int path_len);
-__attribute__((import_module("goclibc"), import_name("getcwd")))
+GOCLIBC_HOST("getcwd")
 extern int goclibc_host_getcwd(int buf, int cap);
-__attribute__((import_module("goclibc"), import_name("chdir")))
+GOCLIBC_HOST("chdir")
 extern int goclibc_host_chdir(int path, int path_len);
-__attribute__((import_module("goclibc"), import_name("readdir")))
+GOCLIBC_HOST("readdir")
 extern int goclibc_host_readdir(int path, int path_len, int buf, int cap);
-__attribute__((import_module("goclibc"), import_name("dup")))
+GOCLIBC_HOST("dup")
 extern int goclibc_host_dup(int fd);
 
 extern FILE *__real_fopen(const char *, const char *);
@@ -71,6 +84,8 @@ extern size_t __real_fwrite(const void *, size_t, size_t, FILE *);
 extern int __real_fflush(FILE *);
 extern int __real_fseek(FILE *, long, int);
 extern long __real_ftell(FILE *);
+extern int __real_fseeko(FILE *, off_t, int);
+extern off_t __real_ftello(FILE *);
 extern int __real_fileno(FILE *);
 extern FILE *__real_fdopen(int, const char *);
 extern int __real_feof(FILE *);
@@ -172,12 +187,16 @@ static void g_fail(int rc) {
 static int g_fill_stat(unsigned char *raw, struct stat *st) {
   unsigned mode = (unsigned)raw[0] | ((unsigned)raw[1] << 8) | ((unsigned)raw[2] << 16) |
                   ((unsigned)raw[3] << 24);
-  unsigned long long sz = 0;
+  unsigned long long sz = 0, mt = 0;
   for (int i = 0; i < 8; i++) sz |= (unsigned long long)raw[8 + i] << (8 * i);
+  for (int i = 0; i < 8; i++) mt |= (unsigned long long)raw[16 + i] << (8 * i);
   memset(st, 0, sizeof *st);
   st->st_mode = (mode_t)mode;
   st->st_nlink = 1;
   st->st_size = (off_t)sz;
+  st->st_mtim.tv_sec = (time_t)(mt / 1000000000ULL);
+  st->st_mtim.tv_nsec = (long)(mt % 1000000000ULL);
+  st->st_ctim = st->st_mtim;
   return 0;
 }
 
@@ -230,10 +249,14 @@ FILE *__wrap_fopen(const char *path, const char *mode) {
   int h = goclibc_host_open((int)(uintptr_t)path, (int)strlen(path), flags);
   if (h < 0) {
     g_slots[slot].used = 0;
+#if !defined(GOCLIBC_IN_KERNEL)
+    /* The kernel's files are the only files; there is nothing to fall
+     * back to. A host that serves some paths itself may miss here. */
     if (!g_writing(flags)) {
       FILE *r = __real_fopen(path, mode);
       if (r) return r;
     }
+#endif
     g_fail(h);
     return NULL;
   }
@@ -376,6 +399,23 @@ long __wrap_ftell(FILE *fp) {
   return (long)rc;
 }
 
+/* libc++'s basic_filebuf seeks with fseeko/ftello, not fseek/ftell. A
+   goclibc handle is not a FILE, so wasi-libc's own fseeko would write into
+   it; route both to the same host seek. */
+int __wrap_fseeko(FILE *fp, off_t off, int whence) {
+  if (!g_ours(fp)) return __real_fseeko(fp, off, whence);
+  if (off < INT_MIN || off > INT_MAX) {
+    errno = EOVERFLOW;
+    return -1;
+  }
+  return __wrap_fseek(fp, (long)off, whence);
+}
+
+off_t __wrap_ftello(FILE *fp) {
+  if (!g_ours(fp)) return __real_ftello(fp);
+  return (off_t)__wrap_ftell(fp);
+}
+
 int __wrap_fileno(FILE *fp) {
   struct GFile *f = g_ours(fp);
   if (!f) return __real_fileno(fp);
@@ -428,11 +468,13 @@ int __wrap_stat(const char *path, struct stat *st) {
     errno = EINVAL;
     return -1;
   }
-  unsigned char raw[16];
+  unsigned char raw[24];
   int rc = goclibc_host_stat((int)(uintptr_t)path, (int)strlen(path), (int)(uintptr_t)raw);
   if (rc < 0) {
+#if !defined(GOCLIBC_IN_KERNEL)
     int r = __real_stat(path, st);
     if (r == 0) return 0;
+#endif
     g_fail(rc);
     return -1;
   }
@@ -443,7 +485,7 @@ int __wrap_lstat(const char *path, struct stat *st) { return __wrap_stat(path, s
 
 int __wrap_fstat(int fd, struct stat *st) {
   if (fd >= 3 && fd < kGMax && g_slots[fd].used && g_slots[fd].kind == kGHost) {
-    unsigned char raw[16];
+    unsigned char raw[24];
     int rc = goclibc_host_fstat(g_slots[fd].host, (int)(uintptr_t)raw);
     return g_stat_at(rc, raw, st);
   }
@@ -495,8 +537,10 @@ int __wrap_access(const char *path, int mode) {
   }
   int rc = goclibc_host_access((int)(uintptr_t)path, (int)strlen(path));
   if (rc < 0) {
+#if !defined(GOCLIBC_IN_KERNEL)
     int r = __real_access(path, mode);
     if (r == 0) return 0;
+#endif
     g_fail(rc);
     return -1;
   }
@@ -532,8 +576,10 @@ DIR *__wrap_opendir(const char *path) {
   int n = goclibc_host_readdir((int)(uintptr_t)path, (int)strlen(path), (int)(uintptr_t)blob, 8192);
   if (n < 0) {
     free(blob);
+#if !defined(__wasi__)
     DIR *real = __real_opendir(path);
     if (real) return real;
+#endif
     g_fail(n);
     return NULL;
   }

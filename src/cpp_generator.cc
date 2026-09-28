@@ -100,8 +100,10 @@ std::string EscapeCppStringLiteral(const std::string& s) {
       case '\r': out += "\\r"; break;
       default:
         if (c < 0x20 || c == 0x7f) {
+          // Octal, always three digits: an octal escape ends there, where
+          // `\x` would go on to eat every hex digit after it ("\x1fbeta").
           char buf[8];
-          std::snprintf(buf, sizeof(buf), "\\x%02x", c);
+          std::snprintf(buf, sizeof(buf), "\\%03o", c);
           out += buf;
         } else {
           out += static_cast<char>(c);
@@ -109,6 +111,11 @@ std::string EscapeCppStringLiteral(const std::string& s) {
     }
   }
   out += "\"";
+  // A Go string holds NULs; a C string literal ends at the first one when
+  // it decays to `const char*`. Give std::string the length.
+  if (s.find('\0') != std::string::npos) {
+    return "std::string(" + out + ", " + std::to_string(s.size()) + ")";
+  }
   return out;
 }
 
@@ -261,6 +268,7 @@ File BuildOsBuiltinFile() {
   method0("FileInfo", "Name", MakeNamedType("string"));
   method0("FileInfo", "Size", MakeNamedType("int64"));
   method0("FileInfo", "IsDir", MakeNamedType("bool"));
+  method0("FileInfo", "ModTime", MakeNamedType("Time", "time"));
   method0("DirEntry", "Name", MakeNamedType("string"));
   method0("DirEntry", "IsDir", MakeNamedType("bool"));
 
@@ -5327,9 +5335,104 @@ class Generator {
     }
   }
 
+  // Go comparability is recursive: a struct is comparable only if every
+  // field is, so a struct holding another struct that itself holds a
+  // slice, map, chan, func, or interface (directly or deeper) must not get
+  // an operator== either -- it would call one that was never emitted.
+  // ctx_pkg is the package a field's unqualified type names belong to.
+  bool IsComparableTypeIn(const TypeNode* t, const std::string& ctx_pkg, std::set<std::string>& visiting) const {
+    if (!t) return true;
+    switch (t->kind) {
+      case TypeKind::Slice:
+      case TypeKind::Map:
+      case TypeKind::Chan:
+      case TypeKind::Func:
+        return false;
+      case TypeKind::Pointer:
+        return true;
+      case TypeKind::Array:
+        return IsComparableTypeIn(t->elem.get(), ctx_pkg, visiting);
+      case TypeKind::Named:
+        break;
+    }
+    const std::string pkg = t->pkg.empty() ? ctx_pkg : t->pkg;
+    if (t->name == "any" || LookupInterface(t->name, pkg) != nullptr) return false;
+    if (const StructDecl* sd = LookupStruct(t->name, pkg)) {
+      const std::string key = pkg + "." + t->name;
+      if (visiting.count(key)) return true;
+      visiting.insert(key);
+      bool ok = true;
+      for (auto& f : sd->fields) {
+        if (!IsComparableTypeIn(f.type.get(), pkg, visiting)) {
+          ok = false;
+          break;
+        }
+      }
+      visiting.erase(key);
+      return ok;
+    }
+    if (const TypeAlias* a = LookupAlias(t->name, pkg)) {
+      if (a->type && a->type.get() != t) return IsComparableTypeIn(a->type.get(), pkg, visiting);
+    }
+    return !IsInterfaceType(t);
+  }
+
+  bool IsComparableStruct(const StructDecl& sd) const {
+    std::set<std::string> visiting;
+    visiting.insert("." + sd.name);
+    for (auto& f : sd.fields) {
+      if (!IsComparableTypeIn(f.type.get(), "", visiting)) return false;
+    }
+    return true;
+  }
+
+  // Struct definitions in by-value dependency order. A field (or an [N]T
+  // element) holding another local struct by value needs that struct
+  // complete first, but Go declares types in any order across a package's
+  // files, and files arrive sorted by name. Pointers, slices, maps, chans
+  // and funcs only need the forward declaration (Slice and Map keep their
+  // storage behind a shared_ptr), so they add no edge. A struct that
+  // contains itself by value is invalid Go as well, so a cycle is an error.
+  std::vector<const StructDecl*> OrderedStructs() {
+    std::unordered_map<std::string, const StructDecl*> by_name;
+    for (auto& sd : file_.structs) by_name[sd.name] = &sd;
+    std::function<void(const TypeNode*, std::vector<std::string>&)> deps_of =
+        [&](const TypeNode* t, std::vector<std::string>& deps) {
+          if (!t) return;
+          if (t->kind == TypeKind::Array) {
+            deps_of(t->elem.get(), deps);
+            return;
+          }
+          if (t->kind != TypeKind::Named || !t->pkg.empty()) return;
+          if (by_name.count(t->name)) {
+            deps.push_back(t->name);
+          } else if (const TypeAlias* a = LookupAlias(t->name)) {
+            if (a->is_alias_eq) deps_of(a->type.get(), deps);
+          }
+          for (auto& ta : t->type_args) deps_of(ta.get(), deps);
+        };
+    std::vector<const StructDecl*> order;
+    std::unordered_map<std::string, int> state;  // 1 visiting, 2 done
+    std::function<void(const StructDecl*)> visit = [&](const StructDecl* sd) {
+      if (state[sd->name] == 2) return;
+      if (state[sd->name] == 1) Error("struct '" + sd->name + "' contains itself by value");
+      state[sd->name] = 1;
+      std::vector<std::string> deps;
+      for (auto& f : sd->fields) deps_of(f.type.get(), deps);
+      for (auto& d : deps) {
+        if (d != sd->name) visit(by_name[d]);
+      }
+      state[sd->name] = 2;
+      order.push_back(sd);
+    };
+    for (auto& sd : file_.structs) visit(&sd);
+    return order;
+  }
+
   void EmitStructDefs() {
     auto saved_tp = current_type_params_;
-    for (auto& sd : file_.structs) {
+    for (const StructDecl* sd_ptr : OrderedStructs()) {
+      auto& sd = *sd_ptr;
       current_type_params_ = sd.type_params;
       if (!sd.type_params.empty()) out_ << TemplatePrefixFrom(sd.type_params);
       out_ << "struct " << sd.name;
@@ -5350,23 +5453,7 @@ class Generator {
       for (auto& fn : file_.funcs) {
         if (fn.has_receiver && fn.receiver_type == sd.name) EmitMethodDecl(fn);
       }
-      bool comparable = true;
-      for (auto& f : sd.fields) {
-        const TypeNode* t = f.type.get();
-        // A named-interface field (any included) has no operator== on the
-        // generated adapter struct (self/vt/type_key -- see
-        // EmitInterfaceDefs), same reason Slice/Map/Chan/Func aren't
-        // comparable here either. Every earlier struct with an interface
-        // field also happened to have a disqualifying Slice/Map field
-        // first, so this gap stayed latent until a struct held ONLY an
-        // interface field alongside plain comparable ones (see
-        // encoding/csv.Writer).
-        if (t && (t->kind == TypeKind::Slice || t->kind == TypeKind::Map || t->kind == TypeKind::Chan ||
-                  t->kind == TypeKind::Func || IsInterfaceType(t))) {
-          comparable = false;
-          break;
-        }
-      }
+      bool comparable = IsComparableStruct(sd);
       if (comparable) {
         std::string self_type = SelfTypeName(sd);
         out_ << "  bool operator==(const " << self_type << "& o) const {\n    return true";
@@ -5940,6 +6027,12 @@ class Generator {
       out_ << "  const VTable* vt = nullptr;\n";
       out_ << "  const void* type_key = nullptr;\n";
       out_ << "  bool is_nil() const { return !vt; }\n";
+      // Go interface equality: same dynamic type holding the same value. For
+      // the pointer-backed values interfaces hold here (adapt_ptr), that is
+      // object identity, which is what == on two interface values means
+      // for pointer receivers in Go.
+      out_ << "  bool operator==(const " << id.name << "& o) const { return vt == o.vt && type_key == o.type_key && self.get() == o.self.get(); }\n";
+      out_ << "  bool operator!=(const " << id.name << "& o) const { return !(*this == o); }\n";
       for (auto* m : methods) {
         std::string r = IfaceMethodReturn(*m);
         // Declaration only here (no body) -- see deferred_iface_method_defs_'s
@@ -5978,29 +6071,43 @@ class Generator {
       out_ << "  T must_cast() const { return wasigo::iface_must_cast<T>(self, type_key); }\n";
       out_ << "  template<class T>\n";
       out_ << "  std::pair<T, bool> try_cast() const { return wasigo::iface_try_cast<T>(self, type_key); }\n";
+      // adapt/adapt_ptr are declared here and defined with the deferred
+      // forwarding bodies: their VTable lambdas take each method's
+      // parameters by value, and a plain struct parameter is still only
+      // forward-declared at this point. Those parameter types do not depend
+      // on T, so GCC 14+ diagnoses them when the template is defined
+      // (-Wtemplate-body), not when it is instantiated.
       out_ << "  template<class T>\n";
-      out_ << "  static " << id.name << " adapt(T v) {\n";
-      out_ << "    static const VTable kvt{\n";
-      for (auto* m : methods) EmitIfaceVTableLambda(*m, "T*");
-      out_ << "    };\n";
-      out_ << "    " << id.name << " i;\n";
-      out_ << "    i.self = std::make_shared<T>(std::move(v));\n";
-      out_ << "    i.vt = &kvt;\n";
-      out_ << "    i.type_key = wasigo::type_key_of<T>();\n";
-      out_ << "    return i;\n";
-      out_ << "  }\n";
+      out_ << "  static " << id.name << " adapt(T v);\n";
       out_ << "  template<class T>\n";
-      out_ << "  static " << id.name << " adapt_ptr(T* v) {\n";
-      out_ << "    if (!v) return {};\n";
-      out_ << "    static const VTable kvt{\n";
-      for (auto* m : methods) EmitIfaceVTableLambda(*m, "T*");
-      out_ << "    };\n";
-      out_ << "    " << id.name << " i;\n";
-      out_ << "    i.self = std::shared_ptr<void>(static_cast<void*>(v), [](void*) {});\n";
-      out_ << "    i.vt = &kvt;\n";
-      out_ << "    i.type_key = wasigo::type_key_of<T*>();\n";
-      out_ << "    return i;\n";
-      out_ << "  }\n";
+      out_ << "  static " << id.name << " adapt_ptr(T* v);\n";
+      {
+        std::ostringstream captured;
+        std::swap(out_, captured);
+        for (auto* m : methods) EmitIfaceVTableLambda(*m, "T*");
+        std::swap(out_, captured);
+        const std::string lambdas = captured.str();
+        auto& d = deferred_iface_method_defs_;
+        d << "template<class T>\n";
+        d << id.name << " " << id.name << "::adapt(T v) {\n";
+        d << "    static const VTable kvt{\n" << lambdas << "    };\n";
+        d << "    " << id.name << " i;\n";
+        d << "    i.self = std::make_shared<T>(std::move(v));\n";
+        d << "    i.vt = &kvt;\n";
+        d << "    i.type_key = wasigo::type_key_of<T>();\n";
+        d << "    return i;\n";
+        d << "}\n";
+        d << "template<class T>\n";
+        d << id.name << " " << id.name << "::adapt_ptr(T* v) {\n";
+        d << "    if (!v) return {};\n";
+        d << "    static const VTable kvt{\n" << lambdas << "    };\n";
+        d << "    " << id.name << " i;\n";
+        d << "    i.self = std::shared_ptr<void>(static_cast<void*>(v), [](void*) {});\n";
+        d << "    i.vt = &kvt;\n";
+        d << "    i.type_key = wasigo::type_key_of<T*>();\n";
+        d << "    return i;\n";
+        d << "}\n";
+      }
       out_ << "};\n";
       if (opt_.library && !file_.package_name.empty() && file_.package_name != "main") {
         EmitNsClose();

@@ -1,0 +1,32 @@
+# Regenerable symlinks in the vendored toolchain. Git on this host
+# (core.symlinks=false, ENOSYS on reparse) cannot index them, so the
+# link files are .gitignored and listed here as <link> -> <target>.
+# Recreate on checkout, e.g.:  while read l t; do ln -sf "$t" "$l"; done < toolchain/symlinks.txt
+#
+toolchain/bin/ar llvm-ar
+toolchain/bin/c++filt llvm-cxxfilt
+toolchain/bin/clang-cl clang
+toolchain/bin/clang-cpp clang
+toolchain/bin/ld64.lld lld
+toolchain/bin/lld-link lld
+toolchain/bin/llvm-addr2line llvm-symbolizer
+toolchain/bin/llvm-ranlib llvm-ar
+toolchain/bin/llvm-strip llvm-objcopy
+toolchain/bin/nm llvm-nm
+toolchain/bin/objcopy llvm-objcopy
+toolchain/bin/objdump llvm-objdump
+toolchain/bin/ranlib llvm-ar
+toolchain/bin/size llvm-size
+toolchain/bin/strings llvm-strings
+toolchain/bin/strip llvm-objcopy
+toolchain/lib/clang/23/lib/wasm32-unknown-wasi /c/Users/grego/go++/toolchain/clang-resource-dir/lib/wasm32-unknown-wasi
+toolchain/lib/clang/23/lib/wasm32-unknown-wasi-threads /c/Users/grego/go++/toolchain/clang-resource-dir/lib/wasm32-unknown-wasi-threads
+toolchain/lib/clang/23/lib/wasm32-unknown-wasip1 /c/Users/grego/go++/toolchain/clang-resource-dir/lib/wasm32-unknown-wasip1
+toolchain/lib/clang/23/lib/wasm32-unknown-wasip1-threads /c/Users/grego/go++/toolchain/clang-resource-dir/lib/wasm32-unknown-wasip1-threads
+toolchain/lib/clang/23/lib/wasm32-unknown-wasip2 /c/Users/grego/go++/toolchain/clang-resource-dir/lib/wasm32-unknown-wasip2
+toolchain/lib/clang/23/lib/wasm32-unknown-wasip3 /c/Users/grego/go++/toolchain/clang-resource-dir/lib/wasm32-unknown-wasip3
+toolchain/lib/libLLVM-23-wasi-sdk.so libLLVM.so.23.1-wasi-sdk
+toolchain/lib/libLLVM.so libLLVM.so.23.1-wasi-sdk
+toolchain/lib/libclang-cpp.so libclang-cpp.so.23.1-wasi-sdk
+toolchain/lib/libclang.so libclang.so.23.1-wasi-sdk
+toolchain/lib/libclang.so.23.1-wasi-sdk libclang.so.23.1.0-wasi-sdk

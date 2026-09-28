@@ -41,8 +41,8 @@ These packages talk `gocvm.Call` into wasigocvm
 | `os/user` | libc USER/USERNAME/HOME |
 | `os/exec` | child in EPT/TPT/CHPT; work is `WASMWin32/` `wasi_call`; `LookPath` is `os.exec.lookpath` |
 | `win32` | WASMWin32 catalog/modules on EPT, process/thread on TPT, token/SID/PEB/TEB/HWND/GDI/COM on CHPT, vmem/WSA/bcrypt/ncrypt/WASMPELoader/crypt32/WinHttp/WinHvPlatform/WinHvEmulation/MainDLL/wininet/setupapi/pdh/wevtapi on EPT; ntdll Nt/Zw/Rtl/Ldr/Tp at kernel32 catalog breadth |
-| `linux` | WASMNix catalog on EPT, process/thread on TPT, session on CHPT; `posix_call` for Linux/WSL/Nix names |
-| `android` | WASMDroid catalog and Binder root on EPT, process/thread on TPT, session on CHPT; `bionic_call` for Bionic/Binder/KVM names |
+| `linux` | WASMNix catalog on EPT, process/thread on TPT, session on CHPT; `wsl_call` for WSL |
+| `android` | Phone Link catalog on EPT, process/thread on TPT, session on CHPT; `phonelink_call` |
 | `gocos` | edge kernel; GocKrnl / GocSys hop k32 and nix through gocvm hypervision; vmem on EPT |
 | `crypto/tls` | OpenSSL wasm, memory BIOs (WASMLime `TlsTransport`), not Schannel |
 
@@ -83,7 +83,7 @@ win32metadata names. WslList/WslExec/Nix still `gocvm.Call("wsl"|"nix")`,
 now dispatched to `WASMNix/`. Stock wasip1 has no bridge.
 
 `stdlib/linux` is the guest API for in-tree `WASMNix/` (`import "linux"`):
-man-pages getpid/uname plus WslList/NixVersion.
+WSL: install, list, exec, path, read, write.
 
 `stdlib/android` is the guest API for in-tree `WASMDroid/` (`import "android"`):
 Bionic getpid/uname/api-level plus Binder/KVM hops.

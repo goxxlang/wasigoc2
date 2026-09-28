@@ -1,6 +1,11 @@
 #ifndef WASMWIN32_INCLUDE_WIN32_CATALOG_H_
 #define WASMWIN32_INCLUDE_WIN32_CATALOG_H_
 
+// NOTE — design mistake, do not repeat:
+// Example trees were copy-dropped into production catalogs. That was
+// wrong. The name is CmdExample. UNIL stays. No model should edit this
+// runtime to get a guest into GocVM.
+//
 // Curated Windows.Win32.* rows from public win32metadata, plus WSL's
 // wslapi / wsl.exe surface and Nix inside WSL. Not a dump of
 // Windows.Win32.winmd.

@@ -5,7 +5,7 @@ gocvm — not WASI, not WIT, not a native/wasm split.** Guest Go++ talks
 `gocvm.Call(topic, payload)`. The machine requires EPT / TPT / CHPT to
 be bound, then dispatches to in-tree `WASMWin32/`, `WASMNix/`, and
 `WASMDroid/` **in this repo**. There is one in-module path:
-libc backends (`wasi_host.hpp` / `posix_host.hpp` / `bionic_host.hpp`).
+libc backends (`wasi_host.hpp`) , WSL (`wsl.hpp`), and Phone Link (`phonelink.hpp`).
 `host_win.cc` / `host_linux.cc` are not the ABI.
 
 Tables and tags: [architecture.md](architecture.md). Bytecode:
@@ -26,7 +26,7 @@ gocvm.Call(topic, api + "\x1f" + arg)
 wasigocvm_libc.hpp     win32_tables_ok / nix_tables_ok / droid_tables_ok
         │              no catalog handle → error, no call
         ▼
-wasi_call / posix_call / bionic_call     headers compiled into the module
+wasi_call / wsl_call / phonelink_call     headers compiled into the module
         │
         ▼
 sysroot libc  (getpid, uname, getenv, …)  or in-module hop
@@ -46,8 +46,8 @@ POSIX / Bionic names stay in the guest module.
 | Artifact | Guest package | `gocvm.Call` topic | Entry | Catalog |
 | --- | --- | --- | --- | --- |
 | `WASMWin32/` | `stdlib/win32` | `win32` | `wasmwin32::wasi_call` | win32metadata `Windows.Win32.*` + WSL |
-| `WASMNix/` | `stdlib/linux` | `linux`, `wsl`, `nix` | `wasmnix::posix_call` | Linux man-pages / POSIX / WSL / Nix |
-| `WASMDroid/` | `stdlib/android` | `android`, `binder`, `kvm` | `wasmdroid::bionic_call` | Bionic + Binder + Android kernel / KVM |
+| `WASMNix/` | `stdlib/linux` | `linux`, `wsl`, `nix` | `wasmnix::wsl_call` | WSL |
+| `WASMDroid/` | `stdlib/android` | `phonelink`, `android` | `wasmdroid::phonelink_call` | Phone Link (`YourPhone`, `ms-phone:`) |
 
 Same shape on every hop: **one dispatch**, **one catalog**, **one libc
 backend**. gocvm always has all three; a bare `gocvm.Call("GetCurrentProcessId", "")`
@@ -93,15 +93,15 @@ import "win32"
 id, err := win32.GetCurrentProcessId()
 
 import "linux"
-pid, err := linux.Getpid()
+list, err := linux.List()
 
 import "android"
-pid, err := android.Getpid()
+fam, err := android.PackageFamilyName()
 ```
 
-Payload is `api` or `api + "\x1f" + arg`. Topics `wsl` / `nix` /
-`binder` / `kvm` are aliases onto the Nix or Droid catalog (`WslList`,
-`NixRun`, `AServiceManager_getService`, `KVM_CREATE_VM`).
+Payload is `api` or `api + "\x1f" + arg`. Topics `wsl` / `nix` are
+WSL (`List`, `Exec`, `Install`, `Path`). `phonelink` /
+`android` are Phone Link (`PackageFamilyName`, `Open`, `Search`, `Sms`).
 
 Unknown names return honest `error:` strings. Missing Nix / adb /
 unmapped PE is a real error, not a stub success.
@@ -109,7 +109,7 @@ unmapped PE is a real error, not a stub success.
 ## What runs
 
 - Query APIs libc already has (`getpid`, `uname`, `getenv`, `stat`,
-  clocks) run in `wasi_host.hpp` / `posix_host.hpp` / `bionic_host.hpp`.
+  clocks) run in `wasi_host.hpp`. WSL is `wsl.hpp`. Phone Link is `phonelink.hpp`.
 - Process create is a `std::thread` child named on TPT.
 - LoadLibrary maps catalog DLLs, `.wasm`, and PE via `WASMPELoader/`.
   MainDLL/TLS is `WHvRunVirtualProcessor` (table-named VP, no PE-to-wasm
@@ -125,8 +125,8 @@ There is no second native ABI.
 | Import | `fd_write`, `wasi:cli/run`, sockets world | none of those as the machine |
 | Capability | preview rights / WIT interfaces | catalog row + `tables_ok()` |
 | Windows | not present | `WASMWin32/` names |
-| Linux | preview POSIX subset | `WASMNix/` man-pages names |
-| Android | not present | `WASMDroid/` Bionic / Binder / KVM |
+| Linux | WSL | `WASMNix/` install, exec, files, wslpath, .wslconfig |
+| Phone Link | not present | `WASMDroid/` YourPhone |
 | Exec | no `fork`/`exec` | EPT/TPT/CHPT child + `wasi_call` |
 
 `docs/wasip2.md` is retired as a product story.
@@ -142,5 +142,5 @@ There is no second native ABI.
 | `stdlib/linux` | Go++ projection |
 | `stdlib/android` | Go++ projection |
 | `WASMWin32/` | catalog + `wasi_host.hpp` |
-| `WASMNix/` | catalog + `posix_host.hpp` |
-| `WASMDroid/` | catalog + `bionic_host.hpp` |
+| `WASMNix/` | catalog + `wsl.hpp` |
+| `WASMDroid/` | catalog + `phonelink.hpp` |

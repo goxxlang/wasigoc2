@@ -1,15 +1,10 @@
-// Package android is the wasigocvm guest side of ~/WASMDroid: Bionic
-// libc names plus Binder and the Android kernel / KVM hop. The session
-// sits on CHPT, process/thread on TPT, catalog and Binder root on EPT.
-// Query APIs the Bionic host implements (getpid, uname, properties, …)
-// run through gocvm.Call("android"|"binder"|"kvm", …) —
-// wasmdroid::bionic_call. One path: bionic_host.hpp in this module.
+// Package android is Phone Link, the Windows YourPhone app.
+// gocvm.Call("android"|"phonelink", …) → wasmdroid::phonelink_call.
 package android
 
 import (
 	"errors"
 	"gocvm"
-	"strconv"
 	"strings"
 )
 
@@ -33,65 +28,65 @@ func Call(api string, arg string) (string, error) {
 	if arg != "" {
 		payload = api + "\x1f" + arg
 	}
-	return call("android", payload)
+	return call("phonelink", payload)
 }
 
-func Getpid() (int, error) {
-	s, err := Call("getpid", "")
-	if err != nil {
-		return 0, err
-	}
-	n, perr := strconv.Atoi(s)
-	if perr != nil {
-		return 0, perr
-	}
-	return n, nil
+func PackageFamilyName() (string, error) {
+	return Call("PackageFamilyName", "")
 }
 
-func Getppid() (int, error) {
-	s, err := Call("getppid", "")
-	if err != nil {
-		return 0, err
-	}
-	n, perr := strconv.Atoi(s)
-	if perr != nil {
-		return 0, perr
-	}
-	return n, nil
+func Aumid() (string, error) {
+	return Call("Aumid", "")
 }
 
-func Uname() (string, error) {
-	return Call("uname", "")
+func Protocol() (string, error) {
+	return Call("Protocol", "")
 }
 
-func Gethostname() (string, error) {
-	return Call("gethostname", "")
+func Open(path string) (string, error) {
+	return Call("Open", path)
 }
 
-func Getcwd() (string, error) {
-	return Call("getcwd", "")
+func Status() (string, error) {
+	return Call("Status", "")
 }
 
-func DeviceApiLevel() (int, error) {
-	s, err := Call("android_get_device_api_level", "")
-	if err != nil {
-		return 0, err
-	}
-	n, perr := strconv.Atoi(s)
-	if perr != nil {
-		return 0, perr
-	}
-	return n, nil
+func Search(query string) (string, error) {
+	return Call("Search", query)
 }
 
-func PropertyGet(name string) (string, error) {
-	return Call("__system_property_get", name)
+func Read(id string) (string, error) {
+	return Call("Read", id)
 }
 
-func BinderGet(name string) (string, error) {
-	return call("binder", "get\x1f"+name)
+func Write(kind string, peer string, body string) (string, error) {
+	return Call("Write", kind+"\x1f"+peer+"\x1f"+body)
 }
 
-func KvmCreateVm() (string, error) {
-	return call("kvm", "create")
+func Monitor(kind string) (string, error) {
+	return Call("Monitor", kind)
+}
+
+func SmsList() (string, error) {
+	return Call("Sms", "list")
+}
+
+func SmsSend(to string, body string) (string, error) {
+	return Call("Sms", "send\x1f"+to+"\x1f"+body)
+}
+
+func Photos() (string, error) {
+	return Call("Photos", "")
+}
+
+func Notifications() (string, error) {
+	return Call("Notifications", "")
+}
+
+func Calls() (string, error) {
+	return Call("Calls", "")
+}
+
+func Apps() (string, error) {
+	return Call("Apps", "")
 }

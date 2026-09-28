@@ -1,3 +1,8 @@
+// NOTE — design mistake, do not repeat:
+// Example trees were copy-dropped into this runtime. That was wrong.
+// The name is CmdExample. UNIL stays. calc_unil.hpp stays.
+// No model should edit this runtime to get a guest into GocVM.
+//
 // Extra kernel32 / user32 / gdi32 / ole32 / ntdll / bcrypt / ncrypt /
 // crypt32 / shell32 / winhttp / iphlpapi / version / comctl32 /
 // wininet / dnsapi / secur32 / dbghelp / wintrust / uxtheme / dwmapi /
@@ -11,7 +16,10 @@
 // is a module table plus file probe (wasm image maps; PE maps through
 // ~/WASMPELoader, including resources / delay-load / TLS as data).
 // MainDLL (AddressOfEntryPoint / DllMain) and TLS callbacks run on that
-// hop via WHvRunVirtualProcessor — the mapper does not JIT x86.
+// hop via WHvRunVirtualProcessor. The runner executes a straight-line
+// entry (mov r8/r32 imm, in/out imm8 or DX, hlt/ret/int3). OUT 0xE9
+// writes the length-prefixed path and body at EAX through k32 in this
+// module (the same file image GocKrnl.WriteFile uses).
 // Tokens/SIDs/PEB/TEB/HWND/GDI/COM are objects on the wasigocvm session.
 // Virtual*Ex/RPM/WPM/NtCreateSection stay in this module's linear memory.
 // DeviceIoControl uses wasi_device_ioctl. WSA is in-memory duplex.
@@ -48,7 +56,15 @@ struct K32File {
   unsigned comp_modes = 0;
   int iocp = 0;
   unsigned handle_flags = 0;
+  int mem_file = 0;
+  size_t mem_pos = 0;
+  std::string mem;
 };
+
+inline std::map<std::string, std::string>& k32_fs() {
+  static std::map<std::string, std::string> fs;
+  return fs;
+}
 
 inline K32File* k32_files() {
   static K32File t[kK32Max];
@@ -68,6 +84,9 @@ inline int k32_alloc_file(FILE* f, const std::string& path = {}) {
       t[i].comp_modes = 0;
       t[i].iocp = 0;
       t[i].handle_flags = 0;
+      t[i].mem_file = 0;
+      t[i].mem_pos = 0;
+      t[i].mem.clear();
       return i;
     }
   }
@@ -124,14 +143,10 @@ inline void k32_run_child(K32Proc* p, const std::string& cmd) {
     std::lock_guard<std::mutex> lk(p->mu);
     p->started = true;
   }
-  // wasigocvm exec: vthread child. Oneshot cmd/pwsh lines are WslExec.
-  // Images (calc.exe, …) load through LoadLibraryW + WHP, not a
-  // Bytecode Alliance "no exec" stub. p->pid is already carried out of
-  // band by CreateProcessW's own pid\x1fhandle\x1fhandle reply and by
-  // GetProcessId — GetProcessOutput must return the command's actual
-  // stdout untouched, or every caller piping this through a terminal
-  // (GocShell.Cmd, cmdterm) shows a leading "pid=<n>\x1f" glued onto
-  // real output.
+  // Oneshot shell lines (cmd.exe /c, powershell -Command) are WslExec.
+  // p->pid is already carried out of band by CreateProcessW's
+  // pid\x1fhandle\x1fhandle reply and by GetProcessId. GetProcessOutput
+  // returns the command's stdout only. Image launch is not done here.
   std::string reply = k32_gocvm_exec(cmd);
   std::lock_guard<std::mutex> lk(p->mu);
   p->out = std::move(reply);
@@ -1059,6 +1074,141 @@ inline void k32_reg_delete_tree(const std::string& path) {
   }
 }
 
+inline bool k32_reg_is_err(const std::string& s) { return s.rfind("error:", 0) == 0; }
+
+inline std::string k32_reg_esc(const std::string& s) {
+  std::string o;
+  o.reserve(s.size());
+  for (unsigned char c : s) {
+    if (c == '\\' || c == '\n' || c == '\r' || c == '\t') {
+      o.push_back('\\');
+      o.push_back(c == '\\' ? '\\' : c == '\n' ? 'n' : c == '\r' ? 'r' : 't');
+    } else {
+      o.push_back(static_cast<char>(c));
+    }
+  }
+  return o;
+}
+
+inline std::string k32_reg_unesc(const std::string& s) {
+  std::string o;
+  for (size_t i = 0; i < s.size(); ++i) {
+    if (s[i] != '\\' || i + 1 >= s.size()) {
+      o.push_back(s[i]);
+      continue;
+    }
+    char n = s[++i];
+    if (n == 'n') o.push_back('\n');
+    else if (n == 'r') o.push_back('\r');
+    else if (n == 't') o.push_back('\t');
+    else o.push_back(n);
+  }
+  return o;
+}
+
+inline std::string k32_reg_save(const std::string& root, const std::string& file) {
+  if (root.empty() || k32_reg_vals().find(root) == k32_reg_vals().end())
+    return err_msg("RegSaveKeyW: ERROR_FILE_NOT_FOUND");
+  if (file.empty()) return err_msg("RegSaveKeyW: empty file");
+  std::string prefix = root + "\\";
+  std::string body = "WHIV1\n";
+  unsigned keys = 0, vals = 0;
+  for (const auto& kv : k32_reg_vals()) {
+    if (kv.first != root && kv.first.rfind(prefix, 0) != 0) continue;
+    std::string rel = kv.first == root ? std::string() : kv.first.substr(prefix.size());
+    body += "K\t";
+    body += k32_reg_esc(rel);
+    body += "\n";
+    keys++;
+    for (const auto& vv : kv.second) {
+      body += "V\t";
+      body += k32_reg_esc(rel);
+      body += "\t";
+      body += k32_reg_esc(vv.first);
+      body += "\t";
+      body += std::to_string(vv.second.type);
+      body += "\t";
+      body += k32_reg_esc(vv.second.data);
+      body += "\n";
+      vals++;
+    }
+  }
+  FILE* f = std::fopen(file.c_str(), "wb");
+  if (!f) return err("RegSaveKeyW");
+  size_t n = std::fwrite(body.data(), 1, body.size(), f);
+  int bad = std::ferror(f) || n != body.size();
+  std::fclose(f);
+  if (bad) return err_msg("RegSaveKeyW: short write");
+  return "bytes=" + std::to_string(n) + " file=" + file + " keys=" + std::to_string(keys) +
+         " values=" + std::to_string(vals);
+}
+
+inline std::string k32_reg_load(const std::string& dest, const std::string& file, bool replace) {
+  const char* api = replace ? "RegRestoreKeyW" : "RegLoadKeyW";
+  if (dest.empty()) return err_msg((std::string(api) + ": empty key").c_str());
+  if (file.empty()) return err_msg((std::string(api) + ": empty file").c_str());
+  FILE* f = std::fopen(file.c_str(), "rb");
+  if (!f) return err(api);
+  std::string body;
+  char buf[4096];
+  while (size_t n = std::fread(buf, 1, sizeof(buf), f)) body.append(buf, n);
+  int bad = std::ferror(f);
+  std::fclose(f);
+  if (bad) return err(api);
+  if (body.rfind("WHIV1\n", 0) != 0) return err_msg((std::string(api) + ": not a hive file").c_str());
+  struct Rec {
+    char kind;
+    std::string rel;
+    std::string name;
+    unsigned type = 1;
+    std::string data;
+  };
+  std::vector<Rec> recs;
+  size_t i = 6;
+  unsigned line = 1;
+  while (i < body.size()) {
+    size_t eol = body.find('\n', i);
+    if (eol == std::string::npos) eol = body.size();
+    std::string row = body.substr(i, eol - i);
+    i = eol < body.size() ? eol + 1 : body.size();
+    line++;
+    if (row.empty()) continue;
+    std::vector<std::string> col;
+    std::string cur;
+    for (char c : row) {
+      if (c == '\t') {
+        col.push_back(cur);
+        cur.clear();
+      } else {
+        cur.push_back(c);
+      }
+    }
+    col.push_back(cur);
+    if (col[0] == "K" && col.size() == 2) {
+      recs.push_back(Rec{'K', k32_reg_unesc(col[1]), {}, 1, {}});
+    } else if (col[0] == "V" && col.size() == 5) {
+      Rec r{'V', k32_reg_unesc(col[1]), k32_reg_unesc(col[2]),
+            static_cast<unsigned>(std::strtoul(col[3].c_str(), nullptr, 10)), k32_reg_unesc(col[4])};
+      recs.push_back(std::move(r));
+    } else {
+      return err_msg((std::string(api) + ": bad record line " + std::to_string(line)).c_str());
+    }
+  }
+  if (replace) k32_reg_delete_tree(dest);
+  unsigned keys = 0, vals = 0;
+  for (const Rec& r : recs) {
+    std::string path = r.rel.empty() ? dest : dest + "\\" + r.rel;
+    k32_reg_ensure(path);
+    if (r.kind == 'K') keys++;
+    else {
+      k32_reg_vals()[path][r.name] = K32RegVal{r.type, r.data};
+      vals++;
+    }
+  }
+  return "bytes=" + std::to_string(body.size()) + " file=" + file + " keys=" + std::to_string(keys) +
+         " values=" + std::to_string(vals) + " root=" + dest;
+}
+
 struct K32Cs {
   std::mutex mu;
 };
@@ -1128,7 +1278,7 @@ inline std::string k32_search_path(const char* a) {
   }
   std::string search = path;
   if (search.empty()) {
-    if (const char* e = std::getenv("PATH")) search = e;
+    if (const char* e = env_get("PATH")) search = e;
   }
   std::string cur;
   auto try_dir = [&](const std::string& dir) {
@@ -1254,7 +1404,7 @@ inline void k32_peb_boot() {
   k32_put32(p.teb + 0x2c, static_cast<unsigned>(reinterpret_cast<uintptr_t>(p.tls)));
   k32_put32(p.teb + 0x30, static_cast<unsigned>(reinterpret_cast<uintptr_t>(p.peb)));
   std::string cmd = "main.wasm";
-  if (const char* e = std::getenv("_")) {
+  if (const char* e = env_get("_")) {
     if (e[0]) cmd = e;
   }
   p.cmdline = static_cast<char*>(std::malloc(cmd.size() * 2 + 4));
@@ -1649,6 +1799,7 @@ inline const char* k32_whp_exit_name(unsigned r) {
     case 0x1001: return "cpuid";
     case 0x1002: return "exception";
     case 0x1003: return "rdtsc";
+    case 0x1005: return "hypercall";
     case 0x2001: return "canceled";
     default: return "exit";
   }
@@ -1791,7 +1942,10 @@ inline std::string k32_whp_decode_run(K32Whp* part, K32Whp* vp) {
     return k32_whp_exit_str(2, rip,
                             std::to_string(vp->last_port) + "\x1f" + (op == 0xEE ? "write" : "read"));
   }
-  return k32_whp_exit_str(8, rip, {});
+  // Anything this runner does not step (a real ntdll prologue, SYSCALL,
+  // VMCALL) is a hypercall exit. HLT stays halt; that is the only halt.
+  vp->last_reason = 0x1005;
+  return k32_whp_exit_str(0x1005, rip, {});
 }
 
 inline std::string k32_whp_try_io(K32Whp* part, K32Whp* vp) {
@@ -1856,6 +2010,10 @@ inline std::string k32_mod_norm(std::string s) {
   if (slash != std::string::npos) s = s.substr(slash + 1);
   if (s.size() > 4 && s.compare(s.size() - 4, 4, ".dll") == 0) s.resize(s.size() - 4);
   return s;
+}
+
+inline bool k32_direct_image(const std::string& n) {
+  return n == "ntdll" || n == "kernel32" || n == "winhvplatform";
 }
 
 inline bool k32_known_dll(const std::string& n) {
@@ -2012,6 +2170,161 @@ inline int k32_whp_ensure_mod(K32Mod* m) {
   return p;
 }
 
+inline std::string& k32_pe_fs_note() {
+  static std::string s;
+  return s;
+}
+
+inline int k32_pe_host_write(const std::string& path, const std::string& body) {
+  ensure_windows_env();
+  k32_fs()[path] = body;
+  FILE* f = std::fopen(path.c_str(), "wb");
+  if (!f) return 0;
+  if (!body.empty() && std::fwrite(body.data(), 1, body.size(), f) != body.size()) {
+    std::fclose(f);
+    return 0;
+  }
+  std::fclose(f);
+  return 0;
+}
+
+inline void k32_pe_commit_write(K32Whp* part, K32Whp* vp) {
+  if (!part || !vp) return;
+  unsigned long long rva = vp->regs[0];
+  unsigned char npath = 0;
+  if (k32_whp_fetch(part, k32_whp_laddr(vp, rva), &npath, 1) != 1 || !npath || npath > 240) return;
+  std::string path(npath, '\0');
+  if (k32_whp_fetch(part, k32_whp_laddr(vp, rva + 1), &path[0], npath) != static_cast<int>(npath))
+    return;
+  unsigned char nbody = 0;
+  if (k32_whp_fetch(part, k32_whp_laddr(vp, rva + 1 + npath), &nbody, 1) != 1) return;
+  std::string body;
+  if (nbody) {
+    body.assign(nbody, '\0');
+    if (k32_whp_fetch(part, k32_whp_laddr(vp, rva + 2 + npath), &body[0], nbody) !=
+        static_cast<int>(nbody))
+      return;
+  }
+  int rc = k32_pe_host_write(path, body);
+  k32_pe_fs_note() = "\x1fwrote=" + path + "\x1f" + "bytes=" + std::to_string(body.size()) +
+                     "\x1frc=" + std::to_string(rc);
+}
+
+// A thunk band the software WHv (no real hypervisor — the Android /
+// no-vCPU path) dispatches to a catalog. The IAT slot that k32_pe_resolve
+// (host band) or ~/WASMGocOS's jit_dll ReactResolve (React band) wrote is
+// loaded into eax; edx points at the 0x1F args (0 for none), ecx at the
+// reply buffer, ebx its cap. On return eax is the catalog status. False
+// when eax is not a thunk, so the caller keeps the legacy OUT 0xE9 =
+// commit-write path.
+constexpr unsigned long long kK32ThunkHostBase = 0x10000ull;
+constexpr unsigned long long kK32ThunkReactBase = 0x40000000ull;
+
+// Is `t` a catalog thunk (not real guest memory)? Host band is the
+// WASMWin32 catalog, React band is ~/WASMReact (when its hook is installed).
+inline bool k32_whp_is_thunk(K32Whp* part, unsigned long long t) {
+  if (t < kK32ThunkHostBase) return false;
+  if (k32_whp_gpa_at(part, t)) return false;  // a real mapped address, not a thunk
+  if (t >= kK32ThunkReactBase) return k32_get_react_call() != nullptr;
+  int c = 0;
+  ::wasmwin32_catalog(&c);
+  return t < kK32ThunkHostBase + static_cast<unsigned long long>(c);
+}
+
+// Dispatch the thunk `thunk` to its catalog. edx -> the 0x1F args (0 for
+// none), ecx -> the reply buffer, ebx its cap; eax receives the status.
+inline void k32_whp_thunk_call(K32Whp* part, K32Whp* vp, unsigned long long thunk) {
+  std::string args;
+  if (unsigned long long ap = vp->regs[2]) {  // edx -> args
+    for (int i = 0; i < 65536; ++i) {
+      char c = 0;
+      if (k32_whp_fetch(part, k32_whp_laddr(vp, ap + i), &c, 1) != 1 || c == 0) break;
+      args.push_back(c);
+    }
+  }
+
+  std::string reply(65536, '\0');
+  int rc = -1;
+  if (thunk >= kK32ThunkReactBase) {
+    if (K32ReactCall react = k32_get_react_call())
+      rc = react(static_cast<unsigned>(thunk - kK32ThunkReactBase), args.c_str(), reply.data(),
+                 static_cast<unsigned>(reply.size()));
+  } else {
+    int c = 0;
+    const WasmWin32Api* cat = ::wasmwin32_catalog(&c);
+    unsigned idx = static_cast<unsigned>(thunk - kK32ThunkHostBase);
+    if (static_cast<int>(idx) < c)
+      rc = ::wasmwin32_call(cat[idx].name, args.c_str(), reply.data(),
+                            static_cast<unsigned>(reply.size()));
+  }
+
+  unsigned long long op = vp->regs[1];   // ecx -> reply buffer
+  unsigned long long cap = vp->regs[3];  // ebx -> reply cap
+  if (op && cap) {
+    size_t len = std::strlen(reply.c_str());
+    if (len + 1 > cap) len = static_cast<size_t>(cap - 1);
+    k32_whp_store(part, k32_whp_laddr(vp, op), reply.c_str(), len);
+    char z = 0;
+    k32_whp_store(part, k32_whp_laddr(vp, op + len), &z, 1);
+  }
+  vp->regs[0] = static_cast<unsigned long long>(static_cast<unsigned>(rc));
+}
+
+inline bool k32_whp_catalog_dispatch(K32Whp* part, K32Whp* vp) {
+  if (!part || !vp) return false;
+  unsigned long long thunk = vp->regs[0];  // eax
+  if (thunk < kK32ThunkHostBase) return false;
+  k32_whp_thunk_call(part, vp, thunk);
+  return true;
+}
+
+inline int k32_whp_exec_step(K32Whp* part, K32Whp* vp) {
+  if (!part || !vp) return 0;
+  unsigned long long rip = vp->regs.count(0x10) ? vp->regs[0x10] : vp->rip;
+  vp->rip = rip;
+  unsigned long long gpa = k32_whp_laddr(vp, rip);
+  unsigned char op = 0;
+  if (k32_whp_fetch(part, gpa, &op, 1) != 1) return 0;
+  if (op == 0xF4) {
+    vp->last_reason = 8;
+    return 0;
+  }
+  if (op == 0xCC || op == 0xC3) return 0;
+  if (op >= 0xB8 && op <= 0xBF) {
+    unsigned char imm[4]{};
+    if (k32_whp_fetch(part, gpa + 1, imm, 4) != 4) return 0;
+    unsigned long long v = imm[0] | (static_cast<unsigned>(imm[1]) << 8) |
+                           (static_cast<unsigned>(imm[2]) << 16) |
+                           (static_cast<unsigned>(imm[3]) << 24);
+    vp->regs[op - 0xB8] = v;
+    vp->rip = rip + 5;
+    vp->regs[0x10] = vp->rip;
+    return 1;
+  }
+  if (op >= 0xB0 && op <= 0xB7) {
+    unsigned char imm = 0;
+    if (k32_whp_fetch(part, gpa + 1, &imm, 1) != 1) return 0;
+    unsigned r = op - 0xB0;
+    vp->regs[r] = (vp->regs[r] & ~0xffull) | imm;
+    vp->rip = rip + 2;
+    vp->regs[0x10] = vp->rip;
+    return 1;
+  }
+  if (op == 0xE6 || op == 0xE4 || op == 0xEE || op == 0xEC) {
+    k32_whp_decode_run(part, vp);
+    k32_whp_try_io(part, vp);
+    if (vp->last_dir == 0 && vp->last_port == 0xE9) {
+      // eax in a thunk band is a catalog call (host or ~/WASMReact); an
+      // eax outside the bands keeps the legacy commit-write behaviour.
+      if (!k32_whp_catalog_dispatch(part, vp)) k32_pe_commit_write(part, vp);
+    }
+    return 1;
+  }
+  vp->last_reason = 0x1005;
+  vp->last_ilen = 1;
+  return 0;
+}
+
 inline std::string k32_whp_run_at(K32Mod* m, unsigned rva) {
   int p = k32_whp_ensure_mod(m);
   if (p < 0) return {};
@@ -2021,7 +2334,10 @@ inline std::string k32_whp_run_at(K32Mod* m, unsigned rva) {
   vp->rip = rva;
   vp->regs[0x10] = rva;
   vp->running = 0;
-  return k32_whp_decode_run(part, vp);
+  for (int i = 0; i < 64; ++i) {
+    if (!k32_whp_exec_step(part, vp)) break;
+  }
+  return k32_whp_exit_str(vp->last_reason, vp->rip, {});
 }
 
 inline bool k32_call_main_dll(K32Mod* m, unsigned reason) {
@@ -2032,6 +2348,13 @@ inline bool k32_call_main_dll(K32Mod* m, unsigned reason) {
     if (m->pe && m->entry_rva) (void)k32_whp_run_at(m, m->entry_rva);
     else if (m->wasm || !m->pe) (void)k32_whp_ensure_mod(m);
     m->main_attached = 1;
+    if (!k32_direct_image(m->name)) {
+      if (K32PsRegister note = k32_get_ps_register()) {
+        std::string image = m->name;
+        if (image.size() < 4 || image.compare(image.size() - 4, 4, ".dll") != 0) image += ".dll";
+        note(image.c_str());
+      }
+    }
     return true;
   }
   if (reason == 0) {
@@ -2073,13 +2396,167 @@ inline FILE* k32_fopen_image(const char* path, std::string* opened) {
   return nullptr;
 }
 
-inline std::string k32_nt_version() {
-  if (const char* e = std::getenv("GOCVM_NT_VERSION")) {
-    while (e && *e == ' ') ++e;
-    if (e && *e) return e;
+inline std::string k32_nt_version() { return nt_version(); }
+
+// GetVersion's DWORD: major | minor << 8 | build << 16. 0 when unknown.
+inline unsigned k32_nt_version_dword() {
+  unsigned maj = 0, min = 0, bld = 0;
+  if (std::sscanf(k32_nt_version().c_str(), "%u.%u.%u", &maj, &min, &bld) < 2) return 0;
+  return (maj & 0xffu) | ((min & 0xffu) << 8) | ((bld & 0x7fffu) << 16);
+}
+
+#include "win32/calc_unil.hpp"
+
+inline int k32_load_library(const char* path);
+
+inline void k32_wasm_native_dlls(const unsigned char* b, size_t n,
+                                 std::vector<std::string>& out) {
+  if (!b || n < 8 || b[0] != 0 || b[1] != 'a' || b[2] != 's' || b[3] != 'm') return;
+  auto uleb = [&](size_t& i) -> unsigned {
+    unsigned v = 0, s = 0;
+    while (i < n) {
+      unsigned c = b[i++];
+      v |= (c & 0x7fu) << s;
+      if ((c & 0x80u) == 0) return v;
+      s += 7;
+      if (s > 28) return 0;
+    }
+    return 0;
+  };
+  size_t i = 8;
+  while (i + 1 < n) {
+    unsigned id = b[i++];
+    size_t at = i;
+    unsigned sz = uleb(i);
+    if (i < at || i + sz > n) break;
+    size_t end = i + sz;
+    if (id == 0 && i < end) {
+      unsigned ln = uleb(i);
+      if (ln == 10 && i + ln <= end &&
+          std::memcmp(b + i, "native.dll", 10) == 0) {
+        i += ln;
+        while (i < end && b[i]) {
+          size_t k = i;
+          while (k < end && b[k]) ++k;
+          if (k > i) out.emplace_back(reinterpret_cast<const char*>(b + i), k - i);
+          i = k + (k < end ? 1 : 0);
+        }
+      }
+    }
+    i = end;
   }
-  // Guest ntdll version. Not Wine 10.0.19041 and not an empty unbound.
-  return "10.0.26100";
+}
+
+inline int k32_take_image(const std::string& n, const std::string& opened,
+                          const std::vector<unsigned char>& buf) {
+  if (buf.size() >= 4 && buf[0] == 0 && buf[1] == 'a' && buf[2] == 's' && buf[3] == 'm') {
+    int h = k32_alloc_mod(n, opened, 1);
+    std::vector<std::string> rels;
+    k32_wasm_native_dlls(buf.data(), buf.size(), rels);
+    for (const std::string& rel : rels) {
+      if (h < 0) break;
+      std::string full = rel;
+      if (rel.find(':') == std::string::npos && rel[0] != '/' && rel[0] != '\\') {
+        auto sl = opened.find_last_of("/\\");
+        if (sl != std::string::npos) full = opened.substr(0, sl + 1) + rel;
+      }
+      int nh = k32_load_library(full.c_str());
+      if (nh >= 0)
+        if (K32Mod* pm = k32_mod(nh)) k32_call_main_dll(pm, 1);
+    }
+    return h;
+  }
+  if (buf.size() >= 2 && buf[0] == 'M' && buf[1] == 'Z')
+    return k32_map_pe_file(n, opened, buf.data(), buf.size());
+  return -193;
+}
+
+// Planet9 packs these two images (WASMReact heapvm k32_unil). Same bytes.
+#if defined(__has_include)
+#  if __has_include("../../../../WASMReact/heapvm/include/win32/k32_unil.hpp")
+#    include "../../../../WASMReact/heapvm/include/win32/k32_unil.hpp"
+#    define WASI_K32_HAS_CORE_PE 1
+#  endif
+#endif
+
+inline bool k32_unil_one(const unsigned char* raw, size_t n, const std::string& leaf,
+                         const unsigned char** out, size_t* sz) {
+  if (!raw || n < 32 || raw[0] != 'U' || raw[1] != 'N' || raw[2] != 'I' || raw[3] != 'L')
+    return false;
+  if (raw[4] != 1 || raw[5] != 0) return false;
+  if (raw[6] & 1) return false;
+  auto u16 = [&](size_t o) -> unsigned { return raw[o] | (raw[o + 1] << 8); };
+  auto u32 = [&](size_t o) -> unsigned {
+    return raw[o] | (raw[o + 1] << 8) | (raw[o + 2] << 16) | (raw[o + 3] << 24);
+  };
+  auto u64 = [&](size_t o) -> unsigned long long {
+    return (unsigned long long)u32(o) | ((unsigned long long)u32(o + 4) << 32);
+  };
+  unsigned count = u32(8);
+  unsigned long long indexOff = u64(12);
+  unsigned long long dataOff = u64(20);
+  if (indexOff < 32 || dataOff < indexOff || dataOff > n || indexOff > n) return false;
+  size_t off = (size_t)indexOff;
+  size_t indexEnd = (size_t)dataOff;
+  std::string want = leaf;
+  for (char& c : want)
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+  for (unsigned i = 0; i < count; ++i) {
+    if (off + 2 > indexEnd) return false;
+    unsigned nl = u16(off);
+    off += 2;
+    if (off + nl > indexEnd) return false;
+    std::string name(reinterpret_cast<const char*>(raw + off), nl);
+    off += nl;
+    if (off + 2 > indexEnd) return false;
+    unsigned ml = u16(off);
+    off += 2;
+    if (off + ml + 22 > indexEnd) return false;
+    off += ml + 2;
+    unsigned long long foff = u64(off);
+    unsigned long long fsz = u64(off + 8);
+    off += 20;
+    for (char& c : name)
+      if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    std::string base = name;
+    auto s2 = base.find_last_of('/');
+    if (s2 != std::string::npos) base = base.substr(s2 + 1);
+    if (name != want && base != want && name != std::string("windows/system32/") + want) continue;
+    if (dataOff + foff + fsz > n) return false;
+    *out = raw + (size_t)dataOff + (size_t)foff;
+    *sz = (size_t)fsz;
+    return true;
+  }
+  return false;
+}
+
+// A UNIL member copied out (k32_unil_one reads it in place).
+inline bool unil_member(const unsigned char* raw, size_t n, const std::string& want,
+                        std::vector<unsigned char>* out) {
+  if (!out) return false;
+  std::string leaf = want;
+  auto sl = leaf.find_last_of("/\\");
+  if (sl != std::string::npos) leaf = leaf.substr(sl + 1);
+  const unsigned char* p = nullptr;
+  size_t sz = 0;
+  if (!k32_unil_one(raw, n, leaf, &p, &sz)) return false;
+  out->assign(p, p + sz);
+  return true;
+}
+
+inline bool k32_core_pe(const std::string& leaf, const unsigned char** out, size_t* n) {
+#if defined(WASI_K32_HAS_CORE_PE)
+  if (!out || !n || leaf.empty()) return false;
+  if (k32_unil_one(kK32Unil, kK32UnilN, leaf, out, n)) return true;
+  if (leaf.size() < 4 || leaf.compare(leaf.size() - 4, 4, ".dll") != 0) {
+    if (k32_unil_one(kK32Unil, kK32UnilN, leaf + ".dll", out, n)) return true;
+  }
+#else
+  (void)leaf;
+  (void)out;
+  (void)n;
+#endif
+  return false;
 }
 
 inline int k32_load_library(const char* path) {
@@ -2091,34 +2568,77 @@ inline int k32_load_library(const char* path) {
     k32_mod(e)->refs++;
     return e;
   }
-  if (k32_known_dll(n)) return k32_alloc_mod(n, path, 0);
-  std::string opened;
-  FILE* f = k32_fopen_image(path, &opened);
-  if (!f) return -126;
-  std::fseek(f, 0, SEEK_END);
-  long sz = std::ftell(f);
-  std::fseek(f, 0, SEEK_SET);
-  if (sz < 4) {
-    std::fclose(f);
-    return -193;
+  if (k32_direct_image(n)) {
+    std::string leaf = path;
+    auto sl = leaf.find_last_of("/\\");
+    if (sl != std::string::npos) leaf = leaf.substr(sl + 1);
+    const unsigned char* bytes = nullptr;
+    size_t bytes_n = 0;
+    if (k32_core_pe(leaf, &bytes, &bytes_n)) {
+      int mh = k32_map_pe_file(n, path, bytes, bytes_n);
+      if (mh >= 0) return mh;
+    }
+    std::string opened;
+    FILE* f = k32_fopen_image(path, &opened);
+    if (f) {
+      std::fseek(f, 0, SEEK_END);
+      long sz = std::ftell(f);
+      std::fseek(f, 0, SEEK_SET);
+      if (sz >= 2) {
+        std::vector<unsigned char> buf(static_cast<size_t>(sz));
+        size_t got = std::fread(buf.data(), 1, static_cast<size_t>(sz), f);
+        std::fclose(f);
+        buf.resize(got);
+        if (buf.size() >= 2 && buf[0] == 'M' && buf[1] == 'Z') {
+          int mh = k32_map_pe_file(n, opened, buf.data(), buf.size());
+          if (mh >= 0) return mh;
+        }
+      } else {
+        std::fclose(f);
+      }
+    }
+    return k32_alloc_mod(n, path, 0);
   }
-  std::vector<unsigned char> buf(static_cast<size_t>(sz));
-  size_t got = std::fread(buf.data(), 1, static_cast<size_t>(sz), f);
-  std::fclose(f);
-  buf.resize(got);
-  if (buf.size() >= 4 && buf[0] == 0 && buf[1] == 'a' && buf[2] == 's' && buf[3] == 'm')
-    return k32_alloc_mod(n, opened, 1);
-  if (buf.size() >= 2 && buf[0] == 'M' && buf[1] == 'Z')
-    return k32_map_pe_file(n, opened, buf.data(), buf.size());
-  return -193;
+  std::string opened;
+  std::vector<unsigned char> buf;
+  FILE* f = k32_fopen_image(path, &opened);
+  if (f) {
+    std::fseek(f, 0, SEEK_END);
+    long sz = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (sz < 4) {
+      std::fclose(f);
+      return -193;
+    }
+    buf.resize(static_cast<size_t>(sz));
+    size_t got = std::fread(buf.data(), 1, buf.size(), f);
+    std::fclose(f);
+    buf.resize(got);
+  } else if (unil_member(kCalcUnil, kCalcUnilN, path, &buf)) {
+    opened = std::string("unil:/windows/system32/") + n;
+  } else {
+    if (k32_known_dll(n)) return k32_alloc_mod(n, path, 0);
+    return -126;
+  }
+  return k32_take_image(n, opened, buf);
+}
+
+inline void k32_direct_load() {
+  static int once = 0;
+  if (once) return;
+  once = 1;
+  const char* imgs[] = {"ntdll.dll", "kernel32.dll", "WinHvPlatform.dll"};
+  for (const char* img : imgs) {
+    int h = k32_load_library(img);
+    if (K32Mod* m = k32_mod(h)) k32_call_main_dll(m, 1);
+  }
 }
 
 inline std::string k32_gocvm_exec(const std::string& cmd) {
-  if (k32_cmd_oneshot(cmd)) {
-    const char* line = wsl_command_line(cmd.c_str());
-    while (line && *line == ' ') ++line;
-    return wasi_call("WslExec", line ? line : "");
-  }
+  // CreateProcessW/A. A guest line (true, echo, uname, cmd /c) is WslExec
+  // in this module. Anything else is an image: LoadLibrary, then the window.
+  std::string shell = wasi_call("WslExec", cmd.c_str());
+  if (shell.rfind("error:", 0) != 0 || k32_cmd_oneshot(cmd)) return shell;
   std::string img = cmd;
   if (!img.empty() && img[0] == '"') {
     auto e = img.find('"', 1);
@@ -2152,6 +2672,8 @@ inline std::string k32_gocvm_exec(const std::string& cmd) {
   out += hwnd;
   out += "\x1fmod=";
   out += std::to_string(h);
+  out += k32_pe_fs_note();
+  k32_pe_fs_note().clear();
   return out;
 }
 
@@ -2182,15 +2704,33 @@ inline unsigned long long k32_proc_addr(K32Mod* m, const char* name) {
     if (!cat[i].name || std::strcmp(cat[i].name, name) != 0) continue;
     if (cat[i].dll && cat[i].dll[0] && m->name != cat[i].dll && m->name != k32_mod_norm(cat[i].dll))
       continue;
-    return 0x10000ull + static_cast<unsigned long long>(i);
+    return kK32ThunkHostBase + static_cast<unsigned long long>(i);
+  }
+  // The host catalog does not serve it: fall back to ~/WASMReact's own
+  // kernel32 (kernel32 -> ntdll -> ntoskrnl) when the kernel installed the
+  // index hook. This is what lets a VM with no host/para hop still link
+  // and run PE imports through the software WHv.
+  if (K32ReactIndex react = k32_get_react_index()) {
+    int index = react(name);
+    if (index >= 0) return kK32ThunkReactBase + static_cast<unsigned long long>(index);
   }
   return 0;
 }
 
 inline unsigned long long k32_pe_resolve(const char* dll, const char* name, void*) {
+  std::string n = k32_mod_norm(dll ? dll : "");
+  if (int h = k32_find_mod(n); h >= 0) {
+    if (K32Mod* live = k32_mod(h)) {
+      if (live->pe && live->base && name && name[0]) {
+        auto it = live->exports.find(name);
+        if (it != live->exports.end())
+          return static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(live->base)) + it->second;
+      }
+    }
+  }
   K32Mod fake{};
   fake.used = 1;
-  fake.name = k32_mod_norm(dll ? dll : "");
+  fake.name = n;
   return k32_proc_addr(&fake, name);
 }
 
@@ -2782,6 +3322,23 @@ inline FILE* fopen_create(const char* path, unsigned access, unsigned disp) {
   return f;
 }
 
+// Lower-level syscall (~/WASMReact). Only reached when this metadata
+// layer has no answer. A hit is that kernel's reply, not a vCPU exit.
+inline bool k32_react_lookup(const char* api, const char* args, std::string* out) {
+  if (!api || !api[0] || !out) return false;
+  K32ReactIndex index_of = k32_get_react_index();
+  K32ReactCall call = k32_get_react_call();
+  if (!index_of || !call) return false;
+  int row = index_of(api);
+  if (row < 0) return false;
+  std::string reply(65536, '\0');
+  int rc = call(static_cast<unsigned>(row), args ? args : "", reply.data(),
+                static_cast<unsigned>(reply.size()));
+  if (rc != 0) return false;
+  *out = reply.c_str();
+  return true;
+}
+
 inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   auto ok = [&](std::string s) {
     *out = std::move(s);
@@ -2806,10 +3363,22 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     return ok("ok");
   }
   if (eq(api, "GetComputerNameExW") || eq(api, "GetComputerNameA")) return ok(hostname());
+  if (eq(api, "SetComputerNameA") || eq(api, "SetComputerNameW") || eq(api, "SetComputerNameExW")) {
+    if (!a[0]) return fail(err_msg("SetComputerNameA: empty"));
+    computer_name() = a;
+    env_set("COMPUTERNAME", a);
+    return ok(a);
+  }
   if (eq(api, "GetSystemWindowsDirectoryW")) return ok(windir());
   if (eq(api, "GetNativeSystemInfo")) return ok("0\x1f" "65536\x1f" "1");
   if (eq(api, "GetSystemTimePreciseAsFileTime")) return ok(filetime_now());
-  if (eq(api, "GetVersion")) return ok("0x0A000000");
+  if (eq(api, "GetVersion") || eq(api, "GetProcessVersion")) {
+    unsigned v = k32_nt_version_dword();
+    if (!v) return fail(err_msg("GetVersion"));
+    char hex[16];
+    std::snprintf(hex, sizeof(hex), "0x%08X", v);
+    return ok(hex);
+  }
   if (eq(api, "GetVersionExW")) return ok(fmt_uname());
   if (eq(api, "GlobalMemoryStatusEx")) return ok(memstat());
   if (eq(api, "GetPhysicallyInstalledSystemMemory")) return ok("1048576");
@@ -2821,7 +3390,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   if (eq(api, "GetUserDefaultLangID") || eq(api, "GetSystemDefaultLangID")) return ok("1033");
   if (eq(api, "GetLocaleInfoW")) return ok("en-US");
   if (eq(api, "GetCommandLineA")) {
-    if (const char* p = std::getenv("_")) {
+    if (const char* p = env_get("_")) {
       if (p[0]) return ok(p);
     }
     return ok("main.wasm");
@@ -3229,7 +3798,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
       if (!p) return fail(err_msg("GetProcessId: bad handle"));
       return ok(std::to_string(p->pid));
     }
-    return ok(std::to_string(static_cast<long>(getpid())));
+    return ok(std::to_string(static_cast<long>(win32_pid())));
   }
   if (eq(api, "ExitProcess")) {
     _Exit(static_cast<int>(std::strtol(a, nullptr, 10)));
@@ -3476,7 +4045,23 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     unsigned acc = static_cast<unsigned>(std::strtoul(access.c_str(), nullptr, 10));
     unsigned d = static_cast<unsigned>(std::strtoul(disp.c_str(), nullptr, 10));
     FILE* f = fopen_create(path.c_str(), acc, d);
-    if (!f) return fail(err("CreateFileW"));
+    if (!f) {
+      bool wr = (acc & 0x40000000u) != 0 || (acc & 0x10000000u) != 0;
+      bool create = d == 1 || d == 2 || d == 4 || d == 5;
+      auto it = k32_fs().find(path);
+      if (it == k32_fs().end() && !wr && !create) return fail(err("CreateFileW"));
+      int mh = k32_alloc_file(nullptr, path);
+      if (mh < 0) return fail(err_msg("CreateFileW: no handles"));
+      K32File& mf = k32_files()[mh];
+      mf.mem_file = 1;
+      if (d == 1 || d == 2 || d == 5)
+        mf.mem.clear();
+      else if (it != k32_fs().end())
+        mf.mem = it->second;
+      mf.mem_pos = (d == 4) ? mf.mem.size() : 0;
+      k32_fs()[path] = mf.mem;
+      return ok(std::to_string(mh));
+    }
     int h = k32_alloc_file(f, path);
     if (h < 0) {
       std::fclose(f);
@@ -3498,6 +4083,16 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
       b.resize(got);
       return ok(b);
     }
+    if (h >= 3 && h < kK32Max && k32_files()[h].used == 1 && k32_files()[h].mem_file) {
+      K32File& mf = k32_files()[h];
+      if (mf.mem_pos > mf.mem.size()) mf.mem_pos = mf.mem.size();
+      size_t got = mf.mem.size() - mf.mem_pos;
+      if (got > n) got = n;
+      std::string b = mf.mem.substr(mf.mem_pos, got);
+      mf.mem_pos += got;
+      k32_file_complete(h, static_cast<unsigned>(got));
+      return ok(b);
+    }
     if (h < 3 || h >= kK32Max || k32_files()[h].used != 1 || !k32_files()[h].f)
       return fail(err_msg("ReadFile: bad handle"));
     std::string b(n, '\0');
@@ -3513,6 +4108,16 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     if (K32Proc* p = k32_proc(h)) {
       std::lock_guard<std::mutex> lk(p->mu);
       p->in.append(data);
+      return ok(std::to_string(data.size()));
+    }
+    if (h >= 3 && h < kK32Max && k32_files()[h].used == 1 && k32_files()[h].mem_file) {
+      K32File& mf = k32_files()[h];
+      if (mf.mem_pos > mf.mem.size()) mf.mem_pos = mf.mem.size();
+      if (mf.mem.size() < mf.mem_pos + data.size()) mf.mem.resize(mf.mem_pos + data.size());
+      if (!data.empty()) std::memcpy(&mf.mem[mf.mem_pos], data.data(), data.size());
+      mf.mem_pos += data.size();
+      k32_fs()[mf.path] = mf.mem;
+      k32_file_complete(h, static_cast<unsigned>(data.size()));
       return ok(std::to_string(data.size()));
     }
     FILE* f = nullptr;
@@ -3656,8 +4261,14 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
       if (k32_files()[h].f) std::fclose(k32_files()[h].f);
       if (k32_files()[h].d) closedir(k32_files()[h].d);
       k32_files()[h] = K32File{};
+      return ok("ok");
     }
-    return ok("ok");
+    // The pseudo-handles (-1 the process, -2 the thread) and the three
+    // standard handles close without effect, as on Windows. Anything else
+    // no table holds -- never handed out, or already closed -- is
+    // ERROR_INVALID_HANDLE.
+    if (h < 3) return ok("ok");
+    return fail(err_msg("CloseHandle: 6"));
   }
   if (eq(api, "DuplicateHandle")) {
 #if defined(_WIN32)
@@ -3986,7 +4597,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   if (eq(api, "GetPriorityClass") || eq(api, "GetThreadPriority")) return ok("32");
   if (eq(api, "SetPriorityClass") || eq(api, "SetThreadPriority")) return ok("ok");
   if (eq(api, "QueryFullProcessImageNameW")) {
-    if (const char* p = std::getenv("_")) {
+    if (const char* p = env_get("_")) {
       if (p[0]) return ok(p);
     }
     return ok("main.wasm");
@@ -4017,7 +4628,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     return ok("ok");
   }
   if (eq(api, "GetModuleFileNameA")) {
-    if (const char* p = std::getenv("_")) {
+    if (const char* p = env_get("_")) {
       if (p[0]) return ok(p);
     }
     return ok("main.wasm");
@@ -4028,12 +4639,28 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     return ok(std::to_string(attr));
   }
   if (eq(api, "GetEnvironmentVariableA")) {
-    const char* v = std::getenv(a);
+    const char* v = env_get(a);
     if (!v) return fail(err_msg("GetEnvironmentVariableA: not found"));
     return ok(v);
   }
+  // Same module environment as the W calls in wasi_host.hpp, one NAME=value
+  // per line.
+  if (eq(api, "GetEnvironmentStringsA")) {
+    std::string s = env_strings();
+    for (char& c : s)
+      if (c == '\x1f') c = '\n';
+    return ok(s);
+  }
+  if (eq(api, "SetEnvironmentVariableA")) {
+    std::string name, val;
+    split1f(a, &name, &val);
+    if (name.empty()) return fail(err_msg("SetEnvironmentVariableA: empty name"));
+    env_set(name.c_str(), val.c_str());
+    if (eq(name.c_str(), "COMPUTERNAME")) computer_name() = val;
+    return ok(val);
+  }
   if (eq(api, "GetTempPathA")) {
-    if (const char* t = std::getenv("TMPDIR")) {
+    if (const char* t = env_get("TMPDIR")) {
       if (t[0]) return ok(t);
     }
     return ok("/tmp");
@@ -4220,7 +4847,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   }
   if (eq(api, "GetNamedPipeClientProcessId") || eq(api, "GetNamedPipeServerProcessId") ||
       eq(api, "GetNamedPipeClientSessionId") || eq(api, "GetNamedPipeServerSessionId"))
-    return ok(std::to_string(static_cast<long>(getpid())));
+    return ok(std::to_string(static_cast<long>(win32_pid())));
   if (eq(api, "LockFile") || eq(api, "LockFileEx") || eq(api, "UnlockFile") ||
       eq(api, "UnlockFileEx"))
     return ok("ok");
@@ -4342,7 +4969,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   }
   if (eq(api, "CreateToolhelp32Snapshot")) return ok("900");
   if (eq(api, "Process32FirstW") || eq(api, "Process32First") || eq(api, "Process32FirstA")) {
-    return ok(std::to_string(static_cast<long>(getpid())) + "\x1fmain.wasm");
+    return ok(std::to_string(static_cast<long>(win32_pid())) + "\x1fmain.wasm");
   }
   if (eq(api, "Process32NextW") || eq(api, "Process32Next") || eq(api, "Process32NextA")) {
     return fail(err_msg("Process32NextW: ERROR_NO_MORE_FILES"));
@@ -4409,7 +5036,6 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   }
   if (eq(api, "GetNumaHighestNodeNumber")) return ok("0");
   if (eq(api, "GetProductInfo")) return ok("48");
-  if (eq(api, "GetProcessVersion")) return ok("0x0A000000");
   if (eq(api, "NeedCurrentDirectoryForExePathW") || eq(api, "NeedCurrentDirectoryForExePathA"))
     return ok("1");
   if (eq(api, "GetDllDirectoryW") || eq(api, "GetDllDirectoryA")) return ok(k32_dll_dir());
@@ -4550,7 +5176,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     split1f(a, &jh, &ph);
     K32Job* j = k32_job(static_cast<int>(std::strtol(jh.c_str(), nullptr, 10)));
     if (!j) return fail(err_msg("AssignProcessToJobObject: bad job"));
-    unsigned pid = static_cast<unsigned>(getpid());
+    unsigned pid = static_cast<unsigned>(win32_pid());
     int phn = static_cast<int>(std::strtol(ph.c_str(), nullptr, 10));
     if (K32Proc* p = k32_proc(phn)) pid = p->pid;
     else if (phn > 0 && phn != -1) pid = static_cast<unsigned>(phn);
@@ -4563,7 +5189,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   if (eq(api, "IsProcessInJob")) {
     std::string ph, jh;
     split1f(a, &ph, &jh);
-    unsigned pid = static_cast<unsigned>(getpid());
+    unsigned pid = static_cast<unsigned>(win32_pid());
     int phn = static_cast<int>(std::strtol(ph.c_str(), nullptr, 10));
     if (K32Proc* p = k32_proc(phn)) pid = p->pid;
     else if (phn > 0 && phn != -1) pid = static_cast<unsigned>(phn);
@@ -4590,7 +5216,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     K32Job* j = k32_job(static_cast<int>(std::strtol(jh.c_str(), nullptr, 10)));
     if (!j) return fail(err_msg("TerminateJobObject: bad job"));
     int exit_code = code.empty() ? 1 : static_cast<int>(std::strtol(code.c_str(), nullptr, 10));
-    unsigned self = static_cast<unsigned>(getpid());
+    unsigned self = static_cast<unsigned>(win32_pid());
     for (unsigned pid : j->pids) {
       if (pid == self) continue;
       K32Proc* procs = k32_procs();
@@ -4626,10 +5252,10 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     return ok(ft + "\x1f" + ft + "\x1f" + ft + "\x1f" + ft);
   }
   if (eq(api, "GetProcessIdOfThread")) {
-    if (!a[0] || std::strtol(a, nullptr, 10) == -2) return ok(std::to_string(static_cast<long>(getpid())));
+    if (!a[0] || std::strtol(a, nullptr, 10) == -2) return ok(std::to_string(static_cast<long>(win32_pid())));
     K32Thr* t = k32_thr(static_cast<int>(std::strtol(a, nullptr, 10)));
     if (!t) return fail(err_msg("GetProcessIdOfThread: bad handle"));
-    return ok(std::to_string(static_cast<long>(getpid())));
+    return ok(std::to_string(static_cast<long>(win32_pid())));
   }
   if (eq(api, "SignalObjectAndWait")) {
     std::string h1, rest, h2, ms;
@@ -4794,7 +5420,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   if (eq(api, "GetConsoleOriginalTitleW") || eq(api, "GetConsoleOriginalTitleA"))
     return ok("wasigocvm");
   if (eq(api, "GetConsoleProcessList"))
-    return ok(std::string("1\x1f") + std::to_string(static_cast<long>(getpid())));
+    return ok(std::string("1\x1f") + std::to_string(static_cast<long>(win32_pid())));
   if (eq(api, "CreateConsoleScreenBuffer")) return ok("-11");
   if (eq(api, "SetConsoleActiveScreenBuffer")) return ok("ok");
   if (eq(api, "CreateDirectoryExW") || eq(api, "CreateDirectoryExA")) {
@@ -4846,10 +5472,10 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   if (eq(api, "WTSGetActiveConsoleSessionId")) return ok("0");
   if (eq(api, "K32GetProcessMemoryInfo") || eq(api, "GetProcessMemoryInfo")) return ok("4096");
   if (eq(api, "K32EnumProcesses") || eq(api, "EnumProcesses"))
-    return ok(std::to_string(static_cast<long>(getpid())));
+    return ok(std::to_string(static_cast<long>(win32_pid())));
   if (eq(api, "K32GetModuleFileNameExW") || eq(api, "GetModuleFileNameExW") ||
       eq(api, "K32GetModuleBaseNameW")) {
-    if (const char* p = std::getenv("_")) {
+    if (const char* p = env_get("_")) {
       if (p[0]) return ok(p);
     }
     return ok("main.wasm");
@@ -4911,10 +5537,10 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     return ok(p == std::string::npos ? "-1" : std::to_string(p));
   }
   if (eq(api, "GetTempPath2W") || eq(api, "GetTempPath2A")) {
-    if (const char* t = std::getenv("TMPDIR")) {
+    if (const char* t = env_get("TMPDIR")) {
       if (t[0]) return ok(t);
     }
-    if (const char* t = std::getenv("TEMP")) {
+    if (const char* t = env_get("TEMP")) {
       if (t[0]) return ok(t);
     }
     return ok("/tmp");
@@ -5426,10 +6052,57 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     r->path = np;
     return ok("ok");
   }
-  if (eq(api, "RegSaveKeyW") || eq(api, "RegSaveKeyA") || eq(api, "RegRestoreKeyW") ||
-      eq(api, "RegRestoreKeyA") || eq(api, "RegLoadKeyW") || eq(api, "RegUnLoadKeyW") ||
-      eq(api, "RegReplaceKeyW") || eq(api, "RegGetKeySecurity") || eq(api, "RegSetKeySecurity"))
-    return fail(err_msg("registry hive file not in wasm"));
+  if (eq(api, "RegSaveKeyW") || eq(api, "RegSaveKeyA")) {
+    std::string hs, file;
+    split1f(a, &hs, &file);
+    if (file.empty()) file = "wasmwin32_reg.hiv";
+    std::string r = k32_reg_save(k32_reg_path_of(hs.c_str()), file);
+    if (k32_reg_is_err(r)) return fail(r);
+    return ok(r);
+  }
+  if (eq(api, "RegLoadKeyW")) {
+    std::string hive, rest, sub, file;
+    split1f(a, &hive, &rest);
+    split1f(rest.c_str(), &sub, &file);
+    if (file.empty()) {
+      file = sub;
+      sub.clear();
+    }
+    std::string dest = k32_reg_join(k32_reg_path_of(hive.c_str()), sub);
+    std::string r = k32_reg_load(dest, file, false);
+    if (k32_reg_is_err(r)) return fail(r);
+    return ok(r);
+  }
+  if (eq(api, "RegRestoreKeyW") || eq(api, "RegRestoreKeyA")) {
+    std::string hs, file;
+    split1f(a, &hs, &file);
+    std::string r = k32_reg_load(k32_reg_path_of(hs.c_str()), file, true);
+    if (k32_reg_is_err(r)) return fail(r);
+    return ok(r);
+  }
+  if (eq(api, "RegUnLoadKeyW")) {
+    std::string hive, sub;
+    split1f(a, &hive, &sub);
+    std::string path = k32_reg_join(k32_reg_path_of(hive.c_str()), sub);
+    if (k32_reg_vals().find(path) == k32_reg_vals().end())
+      return fail(err_msg("RegUnLoadKeyW: ERROR_FILE_NOT_FOUND"));
+    k32_reg_delete_tree(path);
+    return ok(path);
+  }
+  if (eq(api, "RegReplaceKeyW") || eq(api, "RegReplaceKeyA")) {
+    std::string hs, rest, neu, oldf;
+    split1f(a, &hs, &rest);
+    split1f(rest.c_str(), &neu, &oldf);
+    if (neu.empty() || oldf.empty()) return fail(err_msg("RegReplaceKeyW: need new file and old file"));
+    std::string path = k32_reg_path_of(hs.c_str());
+    std::string saved = k32_reg_save(path, oldf);
+    if (k32_reg_is_err(saved)) return fail(saved);
+    std::string loaded = k32_reg_load(path, neu, true);
+    if (k32_reg_is_err(loaded)) return fail(loaded);
+    return ok(saved + "\x1f" + loaded);
+  }
+  if (eq(api, "RegGetKeySecurity") || eq(api, "RegSetKeySecurity"))
+    return fail(err_msg("RegGetKeySecurity: no security descriptor stored"));
   if (eq(api, "RegQueryReflectionKey")) return ok("0");
   if (eq(api, "RegDisableReflectionKey") || eq(api, "RegEnableReflectionKey")) return ok("ok");
 
@@ -5894,7 +6567,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     int infoclass = static_cast<int>(std::strtol(cls.empty() ? "0" : cls.c_str(), nullptr, 10));
     if (infoclass == 7)
       return ok("0");
-    unsigned pid = static_cast<unsigned>(getpid());
+    unsigned pid = static_cast<unsigned>(win32_pid());
     return ok(std::to_string(reinterpret_cast<uintptr_t>(k32_peb().peb)) + "\x1f" +
               std::to_string(pid));
   }
@@ -6061,7 +6734,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   }
   if (nt("NtOpenProcess")) {
     int pid = static_cast<int>(std::strtol(a, nullptr, 10));
-    if (pid == 0 || pid == static_cast<int>(getpid())) return ok("-1");
+    if (pid == 0 || pid == static_cast<int>(win32_pid())) return ok("-1");
     if (!k32_proc_ok(pid) && !k32_proc(pid)) return fail(err_msg("NtOpenProcess"));
     return ok(std::to_string(pid));
   }
@@ -6465,7 +7138,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   }
 
   if (eq(api, "RtlQueryEnvironmentVariable_U")) {
-    const char* v = std::getenv(a && a[0] ? a : "PATH");
+    const char* v = env_get(a && a[0] ? a : "PATH");
     if (!v) return fail(err_msg("RtlQueryEnvironmentVariable_U"));
     return ok(v);
   }
@@ -6476,11 +7149,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
 #if defined(_WIN32)
     return fail(err_msg("RtlSetEnvironmentVariable: use native hop"));
 #else
-    if (val.empty()) {
-      if (unsetenv(name.c_str()) != 0) return fail(err("RtlSetEnvironmentVariable"));
-    } else if (setenv(name.c_str(), val.c_str(), 1) != 0) {
-      return fail(err("RtlSetEnvironmentVariable"));
-    }
+    env_set(name.c_str(), val.c_str());
     return ok("ok");
 #endif
   }
@@ -6660,7 +7329,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   if (eq(api, "LdrFindResource_U")) return try_kernel32("FindResourceW", a, out);
   if (eq(api, "LdrAccessResource")) return try_kernel32("LoadResource", a, out);
   if (eq(api, "LdrGetDllFullName")) {
-    if (const char* p = std::getenv("_")) {
+    if (const char* p = env_get("_")) {
       if (p[0]) return ok(p);
     }
     std::string d = cwd();
@@ -6911,6 +7580,50 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     return ok(std::to_string(w->x) + "\x1f" + std::to_string(w->y) + "\x1f" +
               std::to_string(w->w) + "\x1f" + std::to_string(w->h));
   }
+  if (eq(api, "MoveWindow")) {
+    // "hwnd\x1fx\x1fy\x1fw\x1fh\x1frepaint" -- same fields SetWindowPos takes,
+    // just always-present (MoveWindow has no NOMOVE/NOSIZE flags to skip
+    // any of them) and no z-order/repaint bookkeeping in this simulated
+    // session (repaint is a real caller's own InvalidateRect/BeginPaint
+    // concern, not this session's).
+    std::string hs, rest, x, y, w, h, repaint;
+    split1f(a, &hs, &rest);
+    split1f(rest.c_str(), &x, &rest);
+    split1f(rest.c_str(), &y, &rest);
+    split1f(rest.c_str(), &w, &rest);
+    split1f(rest.c_str(), &h, &repaint);
+    K32Wnd* win = k32_wnd(static_cast<int>(std::strtol(hs.c_str(), nullptr, 10)));
+    if (!win) return fail(err_msg("MoveWindow"));
+    win->x = static_cast<int>(std::strtol(x.c_str(), nullptr, 10));
+    win->y = static_cast<int>(std::strtol(y.c_str(), nullptr, 10));
+    win->w = static_cast<int>(std::strtol(w.c_str(), nullptr, 10));
+    win->h = static_cast<int>(std::strtol(h.c_str(), nullptr, 10));
+    return ok("1");
+  }
+  if (eq(api, "IsWindow")) {
+    return ok(k32_wnd(static_cast<int>(std::strtol(a, nullptr, 10))) ? "1" : "0");
+  }
+  if (eq(api, "SetFocus")) {
+    // Honest stub, same fidelity as GetForegroundWindow/SetForegroundWindow
+    // above -- this session has no real input focus concept, just reuses
+    // the foreground-window slot so a later GetFocus-shaped query (there
+    // isn't one yet) would have something consistent to read. Returns the
+    // *previous* handle, matching real SetFocus.
+    int h = static_cast<int>(std::strtol(a, nullptr, 10));
+    if (!k32_wnd(h)) return fail(err_msg("SetFocus"));
+    int prev = k32_fg_wnd();
+    k32_fg_wnd() = h;
+    return ok(std::to_string(prev));
+  }
+  if (eq(api, "ScreenToClient") || eq(api, "ClientToScreen")) {
+    // No real screen in this session -- screen and client coordinate
+    // spaces coincide (same honest-stub level as GetCursorPos always
+    // reporting 0,0). "hwnd\x1fx\x1fy" in, "x\x1fy" back unchanged.
+    std::string hs, x, y;
+    split1f(a, &hs, &x);
+    split1f(x.c_str(), &x, &y);
+    return ok(x + "\x1f" + y);
+  }
   if (eq(api, "SetWindowPos")) {
     std::string hs, rest, x, y, wh;
     split1f(a, &hs, &rest);
@@ -6984,7 +7697,7 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
   if (eq(api, "GetWindowThreadProcessId")) {
     if (!k32_wnd(static_cast<int>(std::strtol(a, nullptr, 10))))
       return fail(err_msg("GetWindowThreadProcessId"));
-    return ok(std::to_string(static_cast<long>(getpid())));
+    return ok(std::to_string(static_cast<long>(win32_pid())));
   }
   if (eq(api, "PostMessageW") || eq(api, "PostMessageA") || eq(api, "SendMessageW") ||
       eq(api, "SendMessageA")) {
@@ -7061,6 +7774,11 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
       eq(api, "LoadIconA") || eq(api, "LoadImageW"))
     return ok("1");
   if (eq(api, "GetAsyncKeyState") || eq(api, "GetKeyState")) return ok("0");
+  if (eq(api, "SwapBuffers")) {
+    int dc = static_cast<int>(std::strtol(a, nullptr, 10));
+    if (!k32_gdi(dc)) return fail(err_msg("SwapBuffers: bad dc"));
+    return ok("1");
+  }
   if (eq(api, "GetDC") || eq(api, "GetWindowDC")) {
     int h = a[0] ? static_cast<int>(std::strtol(a, nullptr, 10)) : k32_desktop();
     K32Wnd* w = k32_wnd(h);
@@ -7137,6 +7855,39 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     if (h < 0) return fail(err_msg("GetStockObject"));
     k32_gdi(h)->color = 0xffffffu;
     return ok(std::to_string(h));
+  }
+  if (eq(api, "FillRect")) {
+    // "hdc\x1fbrush" -- rect bounds aren't threaded through this session
+    // (no client-visible pixels either way, see StretchDIBits below);
+    // bookkeeping only, same honest-stub level as TranslateMessage/
+    // DispatchMessageW above.
+    std::string dcs, brush;
+    split1f(a, &dcs, &brush);
+    if (!k32_gdi(static_cast<int>(std::strtol(dcs.c_str(), nullptr, 10))))
+      return fail(err_msg("FillRect"));
+    return ok("1");
+  }
+  if (eq(api, "StretchDIBits")) {
+    // "hdc\x1fw\x1fh" -- the pixel payload itself is not threaded through
+    // wasi_call's char*-based, embedded-NUL-unsafe string protocol (real
+    // 32bpp pixel data is full of zero bytes); this session already has
+    // no real display to show it on, so the honest-stub contract is the
+    // *shape* of the blit (a DC sized to hold w*h pixels), not its
+    // content. Real StretchDIBits returns the number of scan lines
+    // copied; mirror that.
+    std::string dcs, rest, w, h;
+    split1f(a, &dcs, &rest);
+    split1f(rest.c_str(), &w, &h);
+    K32Gdi* d = k32_gdi(static_cast<int>(std::strtol(dcs.c_str(), nullptr, 10)));
+    if (!d) return fail(err_msg("StretchDIBits"));
+    int bw = static_cast<int>(std::strtol(w.c_str(), nullptr, 10));
+    int bh = static_cast<int>(std::strtol(h.c_str(), nullptr, 10));
+    if (bw < 1) bw = 1;
+    if (bh < 1) bh = 1;
+    d->bw = bw;
+    d->bh = bh;
+    d->bits.assign(static_cast<size_t>(bw) * static_cast<size_t>(bh) * 4, 0);
+    return ok(std::to_string(bh));
   }
   if (eq(api, "SelectObject")) {
     std::string dcs, obj;
@@ -7218,7 +7969,17 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     int h = k32_alloc_com();
     if (h < 0) return fail(err_msg("CoCreateInstance"));
     k32_com(h)->clsid = a && a[0] ? a : "00000000-0000-0000-0000-000000000000";
+    k32_com(h)->data.clear();
     return ok(std::to_string(h));
+  }
+  if (eq(api, "ComPost") || eq(api, "ComInvoke") || eq(api, "ComGet")) {
+    std::string hs, rest;
+    split1f(a, &hs, &rest);
+    K32Com* p = k32_com(static_cast<int>(std::strtol(hs.c_str(), nullptr, 10)));
+    if (!p) return fail(err_msg(api));
+    if (eq(api, "ComGet")) return ok(p->data);
+    p->data = rest;
+    return ok(rest.empty() ? std::string("ok") : rest);
   }
   if (eq(api, "CoGetClassObject")) {
     int h = k32_alloc_com();
@@ -7334,10 +8095,10 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     int id = -1;
     if (a && a[0] && ((a[0] >= '0' && a[0] <= '9') || a[0] == '-'))
       id = static_cast<int>(std::strtol(a, nullptr, 0));
-    const char* home = std::getenv("HOME");
-    if (!home || !home[0]) home = std::getenv("USERPROFILE");
+    const char* home = env_get("HOME");
+    if (!home || !home[0]) home = env_get("USERPROFILE");
     std::string h = home && home[0] ? home : "/tmp";
-    const char* windir = std::getenv("WINDIR");
+    const char* windir = env_get("WINDIR");
     std::string w = windir && windir[0] ? windir : "/windows";
     if (id == 36 || eq(a, "Windows") || eq(a, "FOLDERID_Windows")) return w;
     if (id == 37 || eq(a, "System") || eq(a, "FOLDERID_System")) return w + "/system32";
@@ -7665,8 +8426,8 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     return ok(name);
   }
   if (eq(api, "GetUserNameExW") || eq(api, "GetUserNameExA")) {
-    const char* u = std::getenv("USER");
-    if (!u || !u[0]) u = std::getenv("USERNAME");
+    const char* u = env_get("USER");
+    if (!u || !u[0]) u = env_get("USERNAME");
     return ok(u && u[0] ? u : "user");
   }
   if (eq(api, "SymInitialize") || eq(api, "SymInitializeW")) return ok("ok");
@@ -8180,5 +8941,6 @@ inline bool try_kernel32(const char* api, const char* a, std::string* out) {
     return ok("ok");
   }
 
+  if (k32_react_lookup(api, a, out)) return true;
   return false;
 }

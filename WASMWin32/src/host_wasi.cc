@@ -5,6 +5,10 @@
 #include <cstring>
 #include <string>
 
+extern "C" int wasigo_process_id(void) {
+  return static_cast<int>(wasmwin32::win32_pid());
+}
+
 extern "C" int wasmwin32_call(const char* api, const char* args, char* out,
                               unsigned cap) {
   std::string reply = wasmwin32::wasi_call(api, args);

@@ -4,7 +4,7 @@
 // on TPT, catalog/vmem/sock/cng/modules/heaps on EPT. Query APIs and WslExec names
 // the libc host implements (uname, echo, true, …) run through
 // gocvm.Call("win32"|"wsl"|"nix", …) — win32 is WASMWin32 wasi_call;
-// wsl/nix are ~/WASMNix posix_call (same topics os/exec and linux use).
+// wsl/nix are ~/WASMNix wsl_call (same topics os/exec and linux use).
 // CreateProcessW is a std::thread child on that hop (kernel32
 // CreateProcessW on native). LoadLibrary is the same hop as the rest of
 // kernel32 (PE maps through ~/WASMPELoader).

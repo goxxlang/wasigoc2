@@ -53,3 +53,44 @@ Thumbs.db
 !toolchain/clang-resource-dir/**
 !toolchain/wasigocvm-toolchain.json
 !libc/**
+
+# GPU/driver research artifacts — not part of the product
+*.sys
+/d3dkmt
+/vidmm
+/wddm
+/woggpu.sys
+
+# Scratch / one-off helpers (repo convention: leading underscore)
+/_*
+/FILL
+toolchain/_*
+
+# Toolchain symlinks git can't index on this host (see toolchain/symlinks.txt).
+/toolchain/bin/ar
+/toolchain/bin/c++filt
+/toolchain/bin/clang-cl
+/toolchain/bin/clang-cpp
+/toolchain/bin/ld64.lld
+/toolchain/bin/lld-link
+/toolchain/bin/llvm-addr2line
+/toolchain/bin/llvm-ranlib
+/toolchain/bin/llvm-strip
+/toolchain/bin/nm
+/toolchain/bin/objcopy
+/toolchain/bin/objdump
+/toolchain/bin/ranlib
+/toolchain/bin/size
+/toolchain/bin/strings
+/toolchain/bin/strip
+/toolchain/lib/clang/23/lib/wasm32-unknown-wasi
+/toolchain/lib/clang/23/lib/wasm32-unknown-wasi-threads
+/toolchain/lib/clang/23/lib/wasm32-unknown-wasip1
+/toolchain/lib/clang/23/lib/wasm32-unknown-wasip1-threads
+/toolchain/lib/clang/23/lib/wasm32-unknown-wasip2
+/toolchain/lib/clang/23/lib/wasm32-unknown-wasip3
+/toolchain/lib/libLLVM-23-wasi-sdk.so
+/toolchain/lib/libLLVM.so
+/toolchain/lib/libclang-cpp.so
+/toolchain/lib/libclang.so
+/toolchain/lib/libclang.so.23.1-wasi-sdk

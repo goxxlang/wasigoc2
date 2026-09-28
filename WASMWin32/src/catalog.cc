@@ -1,4 +1,5 @@
 #include "win32/catalog.h"
+#include "win32/dispatch.h"
 
 // Curated win32metadata slice (Windows.Win32.*) plus WSL/Nix.
 // Names/DLLs follow public Microsoft.Windows.SDK.Win32Metadata /
@@ -1579,3 +1580,14 @@ const WasmWin32Api* wasmwin32_catalog(int* count) {
   if (count) *count = (int)(sizeof(kApis) / sizeof(kApis[0]));
   return kApis;
 }
+
+static K32ReactCall g_react_call = nullptr;
+static K32ReactIndex g_react_index = nullptr;
+static K32PsRegister g_ps_register = nullptr;
+
+extern "C" void k32_set_react_call(K32ReactCall fn) { g_react_call = fn; }
+extern "C" K32ReactCall k32_get_react_call(void) { return g_react_call; }
+extern "C" void k32_set_react_index(K32ReactIndex fn) { g_react_index = fn; }
+extern "C" K32ReactIndex k32_get_react_index(void) { return g_react_index; }
+extern "C" void k32_set_ps_register(K32PsRegister fn) { g_ps_register = fn; }
+extern "C" K32PsRegister k32_get_ps_register(void) { return g_ps_register; }

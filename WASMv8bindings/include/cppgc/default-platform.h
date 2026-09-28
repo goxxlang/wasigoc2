@@ -2,7 +2,7 @@
 // include/cppgc/default-platform.h wraps libplatform's thread pool;
 // wasm32-wasip1 has no threads, so PageAllocator + clocks live here and
 // PostJob / GetForegroundTaskRunner inherit Platform's calling-thread
-// defaults (see cppgc/platform.h).
+// DefaultJobHandle (Join/Cancel/IsActive/NotifyConcurrencyIncrease).
 #ifndef INCLUDE_CPPGC_DEFAULT_PLATFORM_H_
 #define INCLUDE_CPPGC_DEFAULT_PLATFORM_H_
 

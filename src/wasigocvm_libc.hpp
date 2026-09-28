@@ -1,5 +1,5 @@
 // In-guest libc dispatch for gocvm.Call. No companion host: syscall,
-// os.user, win32, linux/wsl/nix, android/binder/kvm, gocos,
+// os.user, win32, linux/wsl/nix, phonelink, gocos,
 // gocdesk, chrome, kill, and exec stay in this module. TLS is OpenSSL in
 // wasigocvm_tls.hpp, not Schannel / gocvm_host.
 #pragma once
@@ -22,9 +22,6 @@
 #if defined(__wasi__)
 // Weak: other TUs also include runtime.hpp. One definition of the
 // guest pid table is enough.
-extern "C" __attribute__((weak)) pid_t getpid(void) {
-  return static_cast<pid_t>(gocvm::proc_self());
-}
 extern "C" __attribute__((weak)) pid_t getppid(void) {
   return static_cast<pid_t>(gocvm::proc_ppid());
 }
@@ -36,15 +33,20 @@ extern "C" __attribute__((weak)) long gocvm_gettid(void) {
 #define WASMWIN32_WASI_HOST_NO_POSIX_HEADERS 1
 #include "win32/wasi_host.hpp"
 #include "win32/catalog.h"
-#include "nix/posix_host.hpp"
+#include "nix/wsl.hpp"
 #include "nix/catalog.h"
-#include "droid/bionic_host.hpp"
+#include "droid/phonelink.hpp"
 #include "droid/catalog.h"
 #include "gocos/host.hpp"
 #include "gocos/catalog.h"
 #if defined(WASIGO_HAS_WASMCHROME) && WASIGO_HAS_WASMCHROME
 #include "chrome/host.hpp"
 #include "chrome/catalog.h"
+#endif
+#if defined(WASIGO_HAS_WASMREACT) && WASIGO_HAS_WASMREACT
+#include "reactos/catalog.h"
+#include "reactos/dispatch.h"
+#include "wpr/processes.h"
 #endif
 
 namespace gocvm {
@@ -423,10 +425,10 @@ inline bool win32_tables_ok() {
 #endif
 
 #if defined(WASIGO_HAS_WASMNIX) && WASIGO_HAS_WASMV8
-// WASMNix on the second address space (do not rewrite posix_host.hpp):
+// WSL on the second address space:
 //   CHPT — NixKernel session
 //   TPT  — current process / thread (trusted)
-//   EPT  — ~/WASMNix catalog
+//   EPT  — WSL catalog
 struct NixKernel final : public cppgc::GarbageCollected<NixKernel> {
   v8::internal::TrustedPointerHandle process_h =
       v8::internal::kNullTrustedPointerHandle;
@@ -509,10 +511,10 @@ inline bool nix_tables_ok() {
 #endif
 
 #if defined(WASIGO_HAS_WASMDROID) && WASIGO_HAS_WASMV8
-// WASMDroid on the second address space (do not rewrite bionic_host.hpp):
+// Phone Link on the second address space:
 //   CHPT — DroidKernel session
 //   TPT  — current process / thread (trusted)
-//   EPT  — ~/WASMDroid catalog + Binder root
+//   EPT  — Phone Link catalog + linked-phone root
 struct DroidKernel final : public cppgc::GarbageCollected<DroidKernel> {
   v8::internal::TrustedPointerHandle process_h =
       v8::internal::kNullTrustedPointerHandle;
@@ -520,7 +522,7 @@ struct DroidKernel final : public cppgc::GarbageCollected<DroidKernel> {
       v8::internal::kNullTrustedPointerHandle;
   v8::internal::ExternalPointerHandle catalog_h =
       v8::internal::kNullExternalPointerHandle;
-  v8::internal::ExternalPointerHandle binder_h =
+  v8::internal::ExternalPointerHandle phone_h =
       v8::internal::kNullExternalPointerHandle;
   v8::CppHeapPointerHandle session_h = v8::kNullCppHeapPointerHandle;
   void Trace(cppgc::Visitor*) const {}
@@ -536,8 +538,8 @@ struct DroidSession final : public cppgc::GarbageCollected<DroidSession> {
   void Trace(cppgc::Visitor*) const {}
 };
 
-struct DroidBinderRoot {
-  const char* kind = "binder";
+struct DroidPhoneRoot {
+  const char* kind = "phonelink";
 };
 
 inline DroidKernel* droid_kernel() {
@@ -546,7 +548,7 @@ inline DroidKernel* droid_kernel() {
   static v8::CppHeapPointerHandle chpt = v8::kNullCppHeapPointerHandle;
   static DroidToken process{"process"};
   static DroidToken thread{"thread"};
-  static DroidBinderRoot binder;
+  static DroidPhoneRoot phone;
   auto& a = aspace();
   if (chpt != v8::kNullCppHeapPointerHandle) {
     return static_cast<DroidKernel*>(a.chpt.Get(chpt, v8::kAnyCppHeapPointer));
@@ -571,7 +573,7 @@ inline DroidKernel* droid_kernel() {
 #endif
   k->session_h = a.chpt.AllocateAndInitializeEntry(sess, kDroidSessionTag);
   session_root = sess;
-  k->binder_h = a.ept.AllocateAndInitializeEntry(&binder, kDroidBinderTag);
+  k->phone_h = a.ept.AllocateAndInitializeEntry(&phone, kDroidPhoneTag);
 #if defined(WASIGO_HAS_WASMDROID_CATALOG)
   int n = 0;
   const WasmDroidApi* cat = wasmdroid_catalog(&n);
@@ -582,7 +584,7 @@ inline DroidKernel* droid_kernel() {
   if (!a.tpt.Get(k->process_h, v8::internal::kAllIndirectPointerTags)) return nullptr;
   if (!a.tpt.Get(k->thread_h, v8::internal::kAllIndirectPointerTags)) return nullptr;
   if (!a.chpt.Get(k->session_h, v8::kAnyCppHeapPointer)) return nullptr;
-  if (!a.ept.Get(k->binder_h, v8::internal::kAnyExternalPointer)) return nullptr;
+  if (!a.ept.Get(k->phone_h, v8::internal::kAnyExternalPointer)) return nullptr;
 #if defined(WASIGO_HAS_WASMDROID_CATALOG)
   if (!a.ept.Get(k->catalog_h, v8::internal::kAnyExternalPointer)) return nullptr;
 #endif
@@ -596,7 +598,7 @@ inline bool droid_tables_ok() {
   if (!a.tpt.Get(k->process_h, v8::internal::kAllIndirectPointerTags)) return false;
   if (!a.tpt.Get(k->thread_h, v8::internal::kAllIndirectPointerTags)) return false;
   if (!a.chpt.Get(k->session_h, v8::kAnyCppHeapPointer)) return false;
-  if (!a.ept.Get(k->binder_h, v8::internal::kAnyExternalPointer)) return false;
+  if (!a.ept.Get(k->phone_h, v8::internal::kAnyExternalPointer)) return false;
 #if defined(WASIGO_HAS_WASMDROID_CATALOG)
   if (!a.ept.Get(k->catalog_h, v8::internal::kAnyExternalPointer)) return false;
 #endif
@@ -742,65 +744,38 @@ inline bool wasigocvm_try_nix(const std::string& topic, const std::string& paylo
   if (topic != "linux" && topic != "wsl" && topic != "nix") return false;
 #if WASIGO_HAS_WASMV8
   if (!nix_tables_ok()) {
-    *reply = "error: linux: EPT/TPT/CHPT bind failed";
-    return true;
-  }
-#endif
-  if (topic == "linux") {
-    std::string api, rest;
-    wasigocvm_split1f(payload, &api, &rest);
-    *reply = wasmnix::posix_call(api.c_str(), rest.c_str());
-    return true;
-  }
-  if (topic == "wsl") {
-    std::string op, rest;
-    wasigocvm_split1f(payload, &op, &rest);
-    if (op == "list" || op.empty()) {
-      *reply = wasmnix::posix_call("WslList", "");
-    } else if (op == "exec") {
-      *reply = wasmnix::posix_call("WslExec", rest.c_str());
-    } else if (op == "registered") {
-      *reply = wasmnix::posix_call("WslIsDistributionRegistered", rest.c_str());
-    } else {
-      *reply = wasmnix::posix_call("WslExec", payload.c_str());
-    }
-    return true;
-  }
-  if (payload.empty() || payload == "version") {
-    *reply = wasmnix::posix_call("NixVersion", "");
-  } else {
-    std::string op, rest;
-    wasigocvm_split1f(payload, &op, &rest);
-    if (op == "run")
-      *reply = wasmnix::posix_call("NixRun", rest.c_str());
-    else
-      *reply = wasmnix::posix_call("NixRun", payload.c_str());
-  }
-  return true;
-}
-
-inline bool wasigocvm_try_droid(const std::string& topic, const std::string& payload,
-                                std::string* reply) {
-  if (topic != "android" && topic != "droid" && topic != "binder" &&
-      topic != "kvm")
-    return false;
-#if WASIGO_HAS_WASMV8
-  if (!droid_tables_ok()) {
-    *reply = "error: android: EPT/TPT/CHPT bind failed";
+    *reply = "error: wsl: EPT/TPT/CHPT bind failed";
     return true;
   }
 #endif
   std::string api, rest;
   wasigocvm_split1f(payload, &api, &rest);
-  if (topic == "binder" && (api.empty() || api == "get")) {
-    *reply = wasmdroid::bionic_call("AServiceManager_getService", rest.c_str());
+  if (topic == "wsl" || topic == "nix") {
+    if (api.empty() || api == "list")
+      api = "List";
+    else if (api == "exec" || api == "run")
+      api = "Exec";
+    else if (api == "registered")
+      api = "IsDistributionRegistered";
+    else if (api == "version")
+      api = "Version";
+  }
+  *reply = wasmnix::wsl_call(api.c_str(), rest.c_str());
+  return true;
+}
+
+inline bool wasigocvm_try_droid(const std::string& topic, const std::string& payload,
+                                std::string* reply) {
+  if (topic != "android" && topic != "droid" && topic != "phonelink") return false;
+#if WASIGO_HAS_WASMV8
+  if (!droid_tables_ok()) {
+    *reply = "error: phonelink: EPT/TPT/CHPT bind failed";
     return true;
   }
-  if (topic == "kvm" && (api.empty() || api == "create")) {
-    *reply = wasmdroid::bionic_call("KVM_CREATE_VM", rest.c_str());
-    return true;
-  }
-  *reply = wasmdroid::bionic_call(api.c_str(), rest.c_str());
+#endif
+  std::string api, rest;
+  wasigocvm_split1f(payload, &api, &rest);
+  *reply = wasmdroid::phonelink_call(api.c_str(), rest.c_str());
   return true;
 }
 
@@ -864,19 +839,19 @@ inline bool wasigocvm_try_any_catalog(const std::string& api, const std::string&
     if (wasigocvm_catalog_ok_reply(*reply)) return true;
   }
   if (nix_tables_ok()) {
-    *reply = wasmnix::posix_call(api.c_str(), arg.c_str());
+    *reply = wasmnix::wsl_call(api.c_str(), arg.c_str());
     if (wasigocvm_catalog_ok_reply(*reply)) return true;
   }
   if (droid_tables_ok()) {
-    *reply = wasmdroid::bionic_call(api.c_str(), arg.c_str());
+    *reply = wasmdroid::phonelink_call(api.c_str(), arg.c_str());
     if (wasigocvm_catalog_ok_reply(*reply)) return true;
   }
 #else
   *reply = wasmwin32::wasi_call(api.c_str(), arg.c_str());
   if (wasigocvm_catalog_ok_reply(*reply)) return true;
-  *reply = wasmnix::posix_call(api.c_str(), arg.c_str());
+  *reply = wasmnix::wsl_call(api.c_str(), arg.c_str());
   if (wasigocvm_catalog_ok_reply(*reply)) return true;
-  *reply = wasmdroid::bionic_call(api.c_str(), arg.c_str());
+  *reply = wasmdroid::phonelink_call(api.c_str(), arg.c_str());
   if (wasigocvm_catalog_ok_reply(*reply)) return true;
 #endif
   return false;
@@ -898,8 +873,168 @@ inline bool wasigocvm_try_chrome(const std::string& topic, const std::string& pa
 #endif
 }
 
+// wasigocvm.bat links ~/WASMTurboSpace host-calls.cc, which defines
+// these. Weak so a module built without that link still compiles; the
+// topic then answers an error.
+extern "C" __attribute__((weak)) int32_t wasmturbo_catalog_dispatch(
+    int32_t packed, const char* api, const int32_t* args);
+extern "C" __attribute__((weak)) int32_t wasmturbo_catalog_call(
+    int32_t catalog, const char* api, const char* args, char* out, unsigned cap);
+// The vCPU OUT. Win32 and nix names leave through this when the partition is up.
+extern "C" __attribute__((weak)) int32_t wasmturbo_vcpu_syscall(const char* api, const char* args,
+                                                               char* out, unsigned cap);
+extern "C" __attribute__((weak)) int32_t wasmturbo_vcpu_hypercall(int32_t catalog, const char* api,
+                                                                 const char* args, char* out,
+                                                                 unsigned cap);
+
+// Catalog::kWin32 is 1. The tail after the API name is the catalog's
+// 0x1F argument string (empty for GetCurrentProcessId and the other
+// arity-0 rows). The reply is the catalog text, not a truncated integer.
+inline bool wasigocvm_try_turbo(const std::string& payload, std::string* reply) {
+  std::string api, rest;
+  wasigocvm_split1f(payload, &api, &rest);
+  if (api.empty()) {
+    *reply = "error: turbospace needs an API name";
+    return true;
+  }
+  int32_t cat = 1;
+  if (api == "nix" || api == "linux" || api == "wsl") {
+    cat = 2;
+    std::string real, tail;
+    wasigocvm_split1f(rest, &real, &tail);
+    if (real.empty()) {
+      *reply = "error: turbospace nix needs an API name";
+      return true;
+    }
+    api = real;
+    rest = tail;
+  }
+  if (&wasmturbo_catalog_call == nullptr) {
+    *reply = "error: turbospace: host-calls not linked";
+    return true;
+  }
+  std::string buf(16384, '\0');
+  // -1 with an empty buffer means the vCPU is not attached. -1 with
+  // text is the hypercall's own reply (a failed call still has one).
+  if ((cat == 1 || cat == 2) && &wasmturbo_vcpu_hypercall != nullptr) {
+    int32_t v = wasmturbo_vcpu_hypercall(cat, api.c_str(), rest.c_str(), buf.data(),
+                                         static_cast<unsigned>(buf.size()));
+    if (v != -1 || buf[0] != '\0') {
+      *reply = buf[0] ? std::string(buf.c_str()) : (v == 0 ? std::string() : std::string("error: turbospace"));
+      return true;
+    }
+  } else if (cat == 1 && &wasmturbo_vcpu_syscall != nullptr) {
+    int32_t v = wasmturbo_vcpu_syscall(api.c_str(), rest.c_str(), buf.data(),
+                                       static_cast<unsigned>(buf.size()));
+    if (v != -1 || buf[0] != '\0') {
+      *reply = buf[0] ? std::string(buf.c_str()) : (v == 0 ? std::string() : std::string("error: turbospace"));
+      return true;
+    }
+  }
+  int32_t rc = wasmturbo_catalog_call(cat, api.c_str(), rest.c_str(), buf.data(),
+                                      static_cast<unsigned>(buf.size()));
+  if (rc != 0) {
+    *reply = buf[0] ? std::string(buf.c_str()) : "error: turbospace";
+    return true;
+  }
+  *reply = buf.c_str();
+  return true;
+}
+
+// ~/WASMReact: ReactOS FreeLoader + ntoskrnl. The kernel names its
+// objects on this module's own EPT / TPT / CHPT and allocates them on its
+// Oilpan heap, so the tables are handed over before the first call.
+inline bool wasigocvm_try_reactos(const std::string& topic, const std::string& payload,
+                                  std::string* reply) {
+#if defined(WASIGO_HAS_WASMREACT) && WASIGO_HAS_WASMREACT
+  if (topic != "reactos") return false;
+#if WASIGO_HAS_WASMV8
+  static bool bound = false;
+  if (!bound) {
+    auto& a = aspace();
+    WasmReactAspace tables{&a.ept, &a.tpt, &a.chpt, &aspace_heap(), aspace_platform().get()};
+    if (wasmreact_bind_aspace(&tables) != 0) {
+      *reply = "error: reactos: EPT/TPT/CHPT bind failed";
+      return true;
+    }
+    bound = true;
+  }
+#endif
+  std::string api, rest;
+  wasigocvm_split1f(payload, &api, &rest);
+  std::string buf(1 << 16, '\0');
+  wasmreact_call(api.c_str(), rest.c_str(), buf.data(), static_cast<unsigned>(buf.size()));
+  *reply = buf.c_str();
+  return true;
+#else
+  (void)topic;
+  (void)payload;
+  (void)reply;
+  return false;
+#endif
+}
+
+#if defined(WASIGO_HAS_WASMREACT) && WASIGO_HAS_WASMREACT
+// Lower-level syscall lookup. Installed beside WASMWin32. wasmwin32_call
+// still answers every metadata name it already answers; this runs only
+// when that layer has no answer.
+inline int wasigocvm_react_index(const char* name) {
+  if (name == nullptr || name[0] == 0) return -1;
+  int count = 0;
+  const WasmReactApi* rows = wasmreact_catalog(&count);
+  for (int i = 0; i < count; ++i)
+    if (rows[i].name != nullptr && std::strcmp(rows[i].name, name) == 0) return i;
+  return -1;
+}
+
+inline int wasigocvm_react_call(unsigned index, const char* args, char* out, unsigned cap) {
+#if WASIGO_HAS_WASMV8
+  static bool bound = false;
+  if (!bound) {
+    auto& a = aspace();
+    WasmReactAspace tables{&a.ept, &a.tpt, &a.chpt, &aspace_heap(), aspace_platform().get()};
+    if (wasmreact_bind_aspace(&tables) != 0) {
+      if (out != nullptr && cap != 0) out[0] = 0;
+      return -1;
+    }
+    bound = true;
+  }
+#endif
+  int count = 0;
+  const WasmReactApi* rows = wasmreact_catalog(&count);
+  if (static_cast<int>(index) >= count || rows[index].name == nullptr) {
+    if (out != nullptr && cap != 0) out[0] = 0;
+    return -1;
+  }
+  return wasmreact_call(rows[index].name, args != nullptr ? args : "", out, cap);
+}
+
+inline void wasigocvm_ps_register(const char* image) {
+  if (!image || !image[0]) return;
+  uint32_t id = 2166136261u;
+  for (const unsigned char* p = reinterpret_cast<const unsigned char*>(image); *p; ++p)
+    id = (id ^ *p) * 16777619u;
+  if (!id) id = 1;
+  wpr::Processes::Shared().AdoptOsProcess(id, image, nullptr);
+}
+
+inline void wasigocvm_install_react_lookup() {
+  static const int once = []() {
+    k32_set_react_index(wasigocvm_react_index);
+    k32_set_react_call(wasigocvm_react_call);
+    k32_set_ps_register(wasigocvm_ps_register);
+    return 1;
+  }();
+  (void)once;
+}
+#endif
+
 inline bool wasigocvm_try_libc(const std::string& topic, const std::string& payload,
                                std::string* reply) {
+#if defined(WASIGO_HAS_WASMREACT) && WASIGO_HAS_WASMREACT
+  wasigocvm_install_react_lookup();
+#endif
+  if (topic == "turbospace") return wasigocvm_try_turbo(payload, reply);
   if (topic == "syscall") return wasigocvm_try_syscall(payload, reply);
   if (topic == "os.user") return wasigocvm_try_user(payload, reply);
   if (wasigocvm_try_win32(topic, payload, reply)) return true;
@@ -908,6 +1043,7 @@ inline bool wasigocvm_try_libc(const std::string& topic, const std::string& payl
   if (wasigocvm_try_desktopengine(topic, payload, reply)) return true;
   if (wasigocvm_try_gocos(topic, payload, reply)) return true;
   if (wasigocvm_try_chrome(topic, payload, reply)) return true;
+  if (wasigocvm_try_reactos(topic, payload, reply)) return true;
   return wasigocvm_try_any_catalog(topic, payload, reply);
 }
 

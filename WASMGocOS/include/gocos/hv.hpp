@@ -2,7 +2,7 @@
 #define WASMGOCOS_INCLUDE_GOCOS_HV_HPP_
 
 // gocvm hypervision. The only hops GocKrnl / GocSys / GocDesk / GocNix
-// may take: k32 (~/WASMWin32 wasi_call) and nix (~/WASMNix posix_call)
+// may take: k32 (~/WASMWin32 wasi_call) and nix (~/WASMNix wsl_call)
 // for WSL. No libc, no kernel32 import, no wineserver.
 
 inline bool eq(const char* a, const char* b) {
@@ -97,7 +97,7 @@ inline std::string k32(const char* api, const char* args) {
 
 inline std::string nix(const char* api, const char* args) {
 #if defined(WASMGOCOS_HAS_NIX)
-  return wasmnix::posix_call(api, args ? args : "");
+  return wasmnix::wsl_call(api, args ? args : "");
 #else
   (void)api;
   (void)args;

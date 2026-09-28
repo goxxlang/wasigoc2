@@ -577,6 +577,7 @@ const char* WhpExitName(unsigned r) {
     case 0x1001: return "cpuid";
     case 0x1002: return "exception";
     case 0x1003: return "rdtsc";
+    case 0x1005: return "hypercall";
     case 0x2001: return "canceled";
     default: return "exit";
   }
@@ -1217,7 +1218,7 @@ extern "C" int wasmwin32_call(const char* api, const char* args, char* out,
     };
     if (gui(cmd.empty() ? app : cmd)) flags = 0;
     // Console commands (cmd.exe /c, powershell -Command, …) are the
-    // Console command path — pipe their combined
+    // CmdExample terminal path — pipe their combined
     // stdout+stderr so GetProcessOutput has real bytes to return. GUI
     // apps (calc.exe, notepad.exe with no /c) keep their own console
     // and are not redirected.
@@ -3027,7 +3028,21 @@ extern "C" int wasmwin32_call(const char* api, const char* args, char* out,
     }
     return Fill(out, cap, std::to_string(info.ActiveProcesses));
   }
-  if (Eq(api, "SetInformationJobObject")) return Fill(out, cap, "ok");
+  if (Eq(api, "SetInformationJobObject")) {
+    // handle \x1f limit. "kill" is JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: the
+    // job's processes end when its last handle closes, including at exit.
+    std::string jh, limit;
+    Split1f(a, &jh, &limit);
+    if (limit.empty()) return Fill(out, cap, "ok");
+    if (limit != "kill") return FillErr(out, cap, ERROR_INVALID_PARAMETER, api);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(HandleOf(jh.c_str()), JobObjectExtendedLimitInformation,
+                                 &info, sizeof(info))) {
+      return FillErr(out, cap, (int)GetLastError(), api);
+    }
+    return Fill(out, cap, "ok");
+  }
   if (Eq(api, "OpenThread")) {
     DWORD tid = a[0] ? (DWORD)std::strtoul(a, nullptr, 10) : GetCurrentThreadId();
     HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, tid);
@@ -6789,11 +6804,7 @@ extern "C" int wasmwin32_call(const char* api, const char* args, char* out,
       wchar_t csd[128];
     } v{};
     v.sz = sizeof(v);
-    if (fn) fn(&v);
-    else {
-      v.major = 10;
-      v.minor = 0;
-    }
+    if (!fn || fn(&v) != 0 || !v.major) return FillErr(out, cap, ERROR_PROC_NOT_FOUND, api);
     return Fill(out, cap,
                 std::to_string(v.major) + "." + std::to_string(v.minor) + "." +
                     std::to_string(v.build));

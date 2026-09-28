@@ -38,35 +38,17 @@ worker.onmessage = (e) => {
 
 worker.onerror = (e) => fail(e.message || "worker error");
 
-let line = "";
-term.onData((ch) => {
-  if (ch === "\r") {
-    term.write("\r\n");
-    const enc = new TextEncoder().encode(line + "\n");
-    line = "";
-    if (enc.length > 65536 - 16) return;
-    u8.set(enc, 16);
-    Atomics.store(i32, 1, enc.length);
-    Atomics.store(i32, 0, 1);
-    Atomics.notify(i32, 0);
-    return;
-  }
-  if (ch === "\u007f") {
-    if (line.length) {
-      line = line.slice(0, -1);
-      term.write("\b \b");
-    }
-    return;
-  }
-  if (ch === "\u0003") {
-    term.write("^C\r\n");
-    line = "";
-    return;
-  }
-  if (ch.length === 1 && ch >= " ") {
-    line += ch;
-    term.write(ch);
-  }
+// Dumb pipe: every keystroke goes to the guest as raw bytes. GocOS's console
+// (inside the wasm) does the echo, line editing, backspace, Ctrl-C, and the
+// prompt — no terminal logic here, none in the guest's Go. We only forward in
+// and, in worker.onmessage above, write the console's bytes out.
+term.onData((data) => {
+  const enc = new TextEncoder().encode(data);
+  if (!enc.length || enc.length > 65536 - 16) return;
+  u8.set(enc, 16);
+  Atomics.store(i32, 1, enc.length);
+  Atomics.store(i32, 0, 1);
+  Atomics.notify(i32, 0);
 });
 
 const wasmUrl = new URL("./guest/cmdterm.wasm", import.meta.url);

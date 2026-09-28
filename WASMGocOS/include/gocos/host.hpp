@@ -26,6 +26,12 @@
 #include <cstring>
 #include <string>
 
+#if defined(__has_include)
+#  if __has_include("nix/wsl.hpp")
+#    include "nix/wsl.hpp"
+#    define WASMGOCOS_HAS_NIX 1
+#  endif
+#endif
 #if defined(__wasm__) || defined(__wasi__)
 #  if defined(__has_include)
 #    if __has_include("win32/wasi_host.hpp")
@@ -34,10 +40,6 @@
 #      endif
 #      include "win32/wasi_host.hpp"
 #      define WASMGOCOS_HAS_WIN32 1
-#    endif
-#    if __has_include("nix/posix_host.hpp")
-#      include "nix/posix_host.hpp"
-#      define WASMGOCOS_HAS_NIX 1
 #    endif
 #  endif
 #elif defined(_WIN32)

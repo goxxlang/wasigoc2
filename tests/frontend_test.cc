@@ -206,6 +206,23 @@ int main() {
     }
   }
 
+  {
+    // A control byte before hex digits, and a NUL: both stay in the string.
+    const char* src =
+        "package main\n"
+        "func main() {\n"
+        "  s := \"a\\x1fbeef\\x00z\"\n"
+        "  _ = s\n"
+        "}\n";
+    File f = Parse(Tokenize(src));
+    f.path = "lit.go";
+    std::string cpp = GenerateCpp(f);
+    if (cpp.find("std::string(\"a\\037beef\\000z\", 8)") == std::string::npos) {
+      std::cerr << "string literal codegen: " << cpp << "\n";
+      return 1;
+    }
+  }
+
   std::cout << "frontend_test ok\n";
   return 0;
 }

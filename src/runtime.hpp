@@ -115,8 +115,8 @@ extern "C" int close(int);
 // inside namespace wasigo a no-op once this one has already run.
 #define WASMWIN32_WASI_HOST_NO_POSIX_HEADERS 1
 #include "win32/wasi_host.hpp"
-#include "nix/posix_host.hpp"
-#include "droid/bionic_host.hpp"
+#include "nix/wsl.hpp"
+#include "droid/phonelink.hpp"
 #include "gocos/host.hpp"
 #include "wasigocvm_libc.hpp"
 #include "wasigocvm_exec.hpp"
@@ -139,6 +139,14 @@ extern "C" int close(int);
 #include <coroutine>
 #include <deque>
 #endif
+
+// The generated `time` package (stdlib/time), declared here so
+// wasigo::FileInfo::ModTime can name it; defined only in a program that
+// imports "time", which is the only kind that can call ModTime.
+namespace time_ {
+struct Time;
+Time Unix(int64_t sec, int64_t nsec);
+}  // namespace time_
 
 namespace wasigo {
 
@@ -1705,6 +1713,15 @@ struct File {
   ReadResult Read(Slice<uint8_t> p) {
     if (!fp || !fp->raw) return {0, errors_new("file already closed")};
     if (p.size() == 0) return {0, Error()};
+    // Go's Read returns what is ready. fread on stdin blocks until the
+    // whole slice fills, so a tty read of one keystroke never comes back;
+    // one read(2) hands back the partial chunk (goclibc fread wraps only
+    // its own handles, stdin falls through to wasi-libc).
+    if (fp->raw == stdin) {
+      ssize_t got = ::read(0, &(*p.buf)[p.off], p.size());
+      if (got <= 0) return {0, errors_new("EOF")};
+      return {static_cast<int64_t>(got), Error()};
+    }
     size_t n = std::fread(&(*p.buf)[p.off], 1, p.size(), fp->raw);
     if (n == 0) return {0, errors_new("EOF")};
     return {static_cast<int64_t>(n), Error()};
@@ -1833,17 +1850,26 @@ inline Error os_rename(const std::string& from, const std::string& to) {
 // go++/CMakeLists.txt's wasigo_add_golden -- wasi-sdk only supplies the
 // separate wasm proof). Bounded to what a directory-walking caller
 // (goxx/uniloader/bundle.Collect, the first caller) needs: Name/Size/IsDir.
-// No Mode()/ModTime()/Sys() -- those would need a real os.FileMode with
-// String/Perm methods and a real time.Time built from a raw struct stat,
-// more than any caller here exercises yet.
+// ModTime is the stat's modification time as a time.Time. It is a
+// template so its body, which needs the generated time_::Time complete,
+// is only compiled where a program calls it -- after the time package.
+// No Mode()/Sys() -- those would need a real os.FileMode with String/Perm
+// methods, more than any caller here exercises yet.
 struct FileInfo {
   std::string name_;
   int64_t size_ = 0;
   bool is_dir_ = false;
+  int64_t mtime_ns_ = 0;  // since the Unix epoch; 0 when the filesystem has none
 
   std::string Name() const { return name_; }
   int64_t Size() const { return size_; }
   bool IsDir() const { return is_dir_; }
+  // T is always time_::Time; being a parameter, it and the call on it
+  // are checked only where ModTime is instantiated.
+  template <typename T = time_::Time>
+  T ModTime() const {
+    return time_::Unix(0, static_cast<std::conditional_t<true, int64_t, T>>(mtime_ns_));
+  }
 };
 
 struct OsStatResult {
@@ -1860,6 +1886,11 @@ inline OsStatResult os_stat(const std::string& name) {
   fi.name_ = slash == std::string::npos ? name : name.substr(slash + 1);
   fi.size_ = static_cast<int64_t>(st.st_size);
   fi.is_dir_ = S_ISDIR(st.st_mode) != 0;
+#if defined(__wasi__)
+  fi.mtime_ns_ = static_cast<int64_t>(st.st_mtim.tv_sec) * 1000000000 + st.st_mtim.tv_nsec;
+#else
+  fi.mtime_ns_ = static_cast<int64_t>(st.st_mtime) * 1000000000;
+#endif
   return {fi, Error()};
 }
 

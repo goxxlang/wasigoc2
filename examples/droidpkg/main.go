@@ -6,11 +6,11 @@ import (
 )
 
 func main() {
-	pid, err := android.Getpid()
+	fam, err := android.PackageFamilyName()
 	fmt.Println(err == nil)
-	fmt.Println(pid > 0)
+	fmt.Println(fam == "Microsoft.YourPhone_8wekyb3d8bbwe")
 
-	api, err2 := android.DeviceApiLevel()
+	st, err2 := android.Status()
 	fmt.Println(err2 == nil)
-	fmt.Println(api == 34)
+	fmt.Println(st == "unlinked")
 }

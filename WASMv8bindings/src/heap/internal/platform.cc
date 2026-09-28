@@ -11,6 +11,11 @@
 #include "src/heap/internal/gc-info-table.h"
 
 namespace cppgc {
+
+MssAdmitFn g_mss_admit = nullptr;
+
+void SetMssAdmit(MssAdmitFn fn) { g_mss_admit = fn; }
+
 namespace {
 
 bool g_process_initialized = false;
@@ -21,6 +26,7 @@ class ImmediateTaskRunner final : public TaskRunner {
 
   void PostTask(std::unique_ptr<Task> task) override {
     if (!task) return;
+    if (g_mss_admit) g_mss_admit(MssAdmitKind::kTask, static_cast<int>(priority_));
     task->Run();
   }
 
@@ -32,34 +38,72 @@ class ImmediateTaskRunner final : public TaskRunner {
   TaskPriority priority_;
 };
 
+class DefaultJobHandle;
+
 class DefaultJobDelegate final : public JobDelegate {
  public:
   bool ShouldYield() override { return cancelled_; }
+  void NotifyConcurrencyIncrease() override;
+  uint8_t GetTaskId() override { return task_id_; }
+  bool IsJoiningThread() const override;
   void Cancel() { cancelled_ = true; }
+  void set_handle(DefaultJobHandle* handle) { handle_ = handle; }
+  void set_task_id(uint8_t id) { task_id_ = id; }
 
  private:
+  DefaultJobHandle* handle_ = nullptr;
   bool cancelled_ = false;
+  uint8_t task_id_ = 0;
 };
 
 class DefaultJobHandle final : public JobHandle {
  public:
-  explicit DefaultJobHandle(std::unique_ptr<JobTask> job_task)
-      : job_task_(std::move(job_task)) {}
+  DefaultJobHandle(std::unique_ptr<JobTask> job_task, TaskPriority priority)
+      : job_task_(std::move(job_task)), priority_(priority) {
+    delegate_.set_handle(this);
+  }
 
   ~DefaultJobHandle() override {
-    if (job_task_ && !completed_) Join();
+    if (IsValid()) Join();
   }
 
-  void Join() override { RunWorkers(); }
-
-  void Cancel() override {
-    delegate_.Cancel();
-    completed_ = true;
-    running_ = false;
-    job_task_.reset();
+  void NotifyConcurrencyIncrease() override {
+    // No worker pool to wake. If Join() is in flight, RunWorkers()'s loop
+    // re-reads GetMaxConcurrency after each Run(); otherwise Join/dtor
+    // will observe the new max later.
+    if (joining_ && !running_ && job_task_ && !completed_) {
+      RunWorkers();
+    }
   }
 
-  bool IsRunning() override { return running_; }
+  void Join() override {
+    joining_ = true;
+    RunWorkers();
+    joining_ = false;
+  }
+
+  void Cancel() override { Drop(); }
+
+  void CancelAndDetach() override { Drop(); }
+
+  bool IsActive() override {
+    return !completed_ && (running_ || static_cast<bool>(job_task_));
+  }
+
+  bool IsValid() override { return !completed_; }
+
+  bool UpdatePriorityEnabled() const override { return true; }
+
+  void UpdatePriority(TaskPriority new_priority) override {
+    if (new_priority == priority_) return;
+    priority_ = new_priority;
+    if (new_priority != TaskPriority::kBestEffort && !completed_ &&
+        !running_ && job_task_) {
+      Join();
+    }
+  }
+
+  bool is_joining() const { return joining_; }
 
  private:
   void RunWorkers() {
@@ -68,6 +112,7 @@ class DefaultJobHandle final : public JobHandle {
     size_t worker_count = 0;
     while (job_task_->GetMaxConcurrency(worker_count) > worker_count &&
            !delegate_.ShouldYield()) {
+      delegate_.set_task_id(static_cast<uint8_t>(worker_count));
       job_task_->Run(&delegate_);
       ++worker_count;
     }
@@ -76,11 +121,28 @@ class DefaultJobHandle final : public JobHandle {
     job_task_.reset();
   }
 
+  void Drop() {
+    delegate_.Cancel();
+    completed_ = true;
+    running_ = false;
+    job_task_.reset();
+  }
+
   std::unique_ptr<JobTask> job_task_;
   DefaultJobDelegate delegate_;
+  TaskPriority priority_;
   bool running_ = false;
   bool completed_ = false;
+  bool joining_ = false;
 };
+
+void DefaultJobDelegate::NotifyConcurrencyIncrease() {
+  if (handle_) handle_->NotifyConcurrencyIncrease();
+}
+
+bool DefaultJobDelegate::IsJoiningThread() const {
+  return handle_ && handle_->is_joining();
+}
 
 }  // namespace
 
@@ -116,7 +178,9 @@ std::shared_ptr<TaskRunner> Platform::GetForegroundTaskRunner(
 std::unique_ptr<JobHandle> Platform::PostJob(
     TaskPriority priority, std::unique_ptr<JobTask> job_task) {
   if (!job_task) return nullptr;
-  auto handle = std::make_unique<DefaultJobHandle>(std::move(job_task));
+  if (g_mss_admit) g_mss_admit(MssAdmitKind::kJob, static_cast<int>(priority));
+  auto handle =
+      std::make_unique<DefaultJobHandle>(std::move(job_task), priority);
   // Use priority: blocking/visible jobs run on post; best-effort waits
   // for Join() (or the handle destructor).
   if (priority != TaskPriority::kBestEffort) handle->Join();

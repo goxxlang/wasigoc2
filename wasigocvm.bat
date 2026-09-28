@@ -73,6 +73,13 @@ if defined WASIGO_REACT if not defined WASIGO_REACT_IPT (
   echo warning: WASMReact needs WASMSafeSpace with indirect-pointer-table.cc ^(~/WASMVoodooCompile^); not linking it
   set "WASIGO_REACT="
 )
+set "WASIGO_WPR="
+if exist "%USERPROFILE%\WASMProcess\include\wpr\processes.h" set "WASIGO_WPR=%USERPROFILE%\WASMProcess"
+if not defined WASIGO_WPR if exist "%WASIGO_ROOT%\..\WASMProcess\include\wpr\processes.h" for %%I in ("%WASIGO_ROOT%\..\WASMProcess") do set "WASIGO_WPR=%%~fI"
+if defined WASIGO_REACT if not defined WASIGO_WPR (
+  echo warning: WASMReact smss needs WASMProcess; not linking it
+  set "WASIGO_REACT="
+)
 if defined WASIGO_REACT set WASIGOC_EXTRA=!WASIGOC_EXTRA! --import-dir="!WASIGO_REACT!\go"
 
 echo [wasigoc] %GO_ABS%
@@ -162,39 +169,44 @@ if defined WASIGO_WIN32 (
     echo             WASMWin32 wasmwin32_call ^(CreateProcessW^)
   )
 )
-if exist "%WASIGO_ROOT%\WASMNix\include\nix\posix_host.hpp" set "WASIGO_NIX=%WASIGO_ROOT%\WASMNix"
+if exist "%WASIGO_ROOT%\WASMNix\include\nix\wsl.hpp" set "WASIGO_NIX=%WASIGO_ROOT%\WASMNix"
 if not defined WASIGO_NIX (
-  echo error: wasigocvm requires WASMNix\ in this repo ^(nix/posix_host.hpp^)
+  echo error: wasigocvm requires WASMNix\ in this repo ^(nix/wsl.hpp^)
   exit /b 2
 )
 set "WASIGO_NIX_I="
 set "WASIGO_NIX_CC="
 if defined WASIGO_NIX (
   set WASIGO_NIX_I=-I "!WASIGO_NIX!\include"
-  echo             -I "!WASIGO_NIX!\include" ^(WASMNix libc host^)
+  echo             -I "!WASIGO_NIX!\include" ^(WASMNix WSL^)
   if exist "!WASIGO_NIX!\src\catalog.cc" (
-    set WASIGO_NIX_CC="!WASIGO_NIX!\src\catalog.cc"
-    echo             WASMNix catalog on EPT ^(CHPT session^)
+    set WASIGO_NIX_CC="!WASIGO_NIX!\src\catalog.cc" "!WASIGO_NIX!\src\call.cc"
+    echo             WASMNix catalog on EPT ^(CHPT session, WSL^)
   )
 )
-if exist "%WASIGO_ROOT%\WASMDroid\include\droid\bionic_host.hpp" set "WASIGO_DROID=%WASIGO_ROOT%\WASMDroid"
+if exist "%WASIGO_ROOT%\WASMDroid\include\droid\phonelink.hpp" set "WASIGO_DROID=%WASIGO_ROOT%\WASMDroid"
 if not defined WASIGO_DROID (
-  echo error: wasigocvm requires WASMDroid\ in this repo ^(droid/bionic_host.hpp^)
+  echo error: wasigocvm requires WASMDroid\ in this repo ^(droid/phonelink.hpp^)
   exit /b 2
 )
 set "WASIGO_DROID_I="
 set "WASIGO_DROID_CC="
 if defined WASIGO_DROID (
   set WASIGO_DROID_I=-I "!WASIGO_DROID!\include"
-  echo             -I "!WASIGO_DROID!\include" ^(WASMDroid libc host^)
+  echo             -I "!WASIGO_DROID!\include" ^(WASMDroid Phone Link^)
   if exist "!WASIGO_DROID!\src\catalog.cc" (
-    set WASIGO_DROID_CC="!WASIGO_DROID!\src\catalog.cc"
-    echo             WASMDroid catalog on EPT ^(CHPT session, Binder root^)
+    set WASIGO_DROID_CC="!WASIGO_DROID!\src\catalog.cc" "!WASIGO_DROID!\src\call.cc"
+    echo             WASMDroid catalog on EPT ^(CHPT session, Phone Link^)
   )
 )
-if exist "%WASIGO_ROOT%\WASMGocOS\include\gocos\host.hpp" set "WASIGO_GOCOS=%WASIGO_ROOT%\WASMGocOS"
+rem Prefer the canonical ~/WASMGocOS (the in-repo copy is stale). Same
+rem resolution order as WASMChrome below.
+set "WASIGO_GOCOS="
+if exist "%USERPROFILE%\WASMGocOS\include\gocos\host.hpp" set "WASIGO_GOCOS=%USERPROFILE%\WASMGocOS"
+if not defined WASIGO_GOCOS if exist "%WASIGO_ROOT%\..\WASMGocOS\include\gocos\host.hpp" for %%I in ("%WASIGO_ROOT%\..\WASMGocOS") do set "WASIGO_GOCOS=%%~fI"
+if not defined WASIGO_GOCOS if exist "%WASIGO_ROOT%\WASMGocOS\include\gocos\host.hpp" set "WASIGO_GOCOS=%WASIGO_ROOT%\WASMGocOS"
 if not defined WASIGO_GOCOS (
-  echo error: wasigocvm requires WASMGocOS\ in this repo ^(gocos/host.hpp^)
+  echo error: wasigocvm requires WASMGocOS ^(gocos/host.hpp^)
   exit /b 2
 )
 set "WASIGO_GOCOS_I="
@@ -205,6 +217,10 @@ if defined WASIGO_GOCOS (
   if exist "!WASIGO_GOCOS!\src\catalog.cc" (
     set WASIGO_GOCOS_CC="!WASIGO_GOCOS!\src\catalog.cc"
     echo             WASMGocOS catalog on EPT ^(CHPT session, GocDesk^)
+  )
+  if exist "!WASIGO_GOCOS!\src\vcpu.cc" (
+    set WASIGO_GOCOS_CC=!WASIGO_GOCOS_CC! "!WASIGO_GOCOS!\src\vcpu.cc"
+    echo             WASMGocOS vcpu ^(wasmturbo_vcpu_* on wasmwin32_call^)
   )
 )
 set "WASIGO_CHROME="
@@ -273,11 +289,21 @@ set "WASIGO_REACT_I="
 set "WASIGO_REACT_CC="
 set "WASIGO_REACT_D="
 if defined WASIGO_REACT (
-  set WASIGO_REACT_I=-I "!WASIGO_REACT!\include" -I "!WASIGO_REACT_IPT!"
+  set WASIGO_REACT_I=-I "!WASIGO_REACT!\include" -I "!WASIGO_REACT_IPT!" -I "!WASIGO_WPR!\include" -I "!WASIGO_WPR!\src" -I "!USERPROFILE!\WASMChrome\include" -I "!USERPROFILE!\WASMNetStack\include"
   set WASIGO_REACT_CC="!WASIGO_REACT!\src\unity.cc" "!WASIGO_REACT_IPT!\src\sandbox\indirect-pointer-table.cc"
   set WASIGO_REACT_D=-DWASIGO_HAS_WASMREACT=1
   echo             -I "!WASIGO_REACT!\include" ^(WASMReact ReactOS kernel on EPT/TPT/CHPT/IPT^)
 )
+set "WASIGO_TURBO="
+if exist "%USERPROFILE%\WASMTurboSpace\src\hostcalls\host-calls.cc" set "WASIGO_TURBO=%USERPROFILE%\WASMTurboSpace"
+if not defined WASIGO_TURBO if exist "%WASIGO_ROOT%\..\WASMTurboSpace\src\hostcalls\host-calls.cc" for %%I in ("%WASIGO_ROOT%\..\WASMTurboSpace") do set "WASIGO_TURBO=%%~fI"
+if not defined WASIGO_TURBO (
+  echo error: wasigocvm requires WASMTurboSpace ^(host-calls.cc^)
+  exit /b 2
+)
+set "WASIGO_TURBO_I=-I "!WASIGO_TURBO!""
+set "WASIGO_TURBO_CC="!WASIGO_TURBO!\src\hostcalls\host-calls.cc" "!WASIGO_TURBO!\src\runtime\reactos.cc""
+echo             WASMTurboSpace host-calls ^(wasmturbo_catalog_call^)
 set "GOCLC_WRAP=-Wl,--wrap=fopen -Wl,--wrap=fclose -Wl,--wrap=fread -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fseek -Wl,--wrap=ftell -Wl,--wrap=fseeko -Wl,--wrap=ftello -Wl,--wrap=fileno -Wl,--wrap=fdopen -Wl,--wrap=feof -Wl,--wrap=ferror -Wl,--wrap=clearerr -Wl,--wrap=rewind -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=fstat -Wl,--wrap=mkdir -Wl,--wrap=rmdir -Wl,--wrap=unlink -Wl,--wrap=remove -Wl,--wrap=rename -Wl,--wrap=access -Wl,--wrap=getcwd -Wl,--wrap=chdir -Wl,--wrap=opendir -Wl,--wrap=readdir -Wl,--wrap=closedir -Wl,--wrap=pipe -Wl,--wrap=dup -Wl,--wrap=dup2"
 "%WASIGO_CLANG%" -O2 -std=c++20 -fuse-ld=lld ^
   -fexceptions -frtti ^
@@ -291,10 +317,10 @@ set "GOCLC_WRAP=-Wl,--wrap=fopen -Wl,--wrap=fclose -Wl,--wrap=fread -Wl,--wrap=f
   -Wl,--export=__indirect_function_table ^
   %GOCLC_WRAP% ^
   %WASIGO_PTHREAD_FLAGS% ^
-  -I "%GO_DIR%" -I "%WASIGO_SRC_INC%" !WASIGO_WIN32_I! !WASIGO_NIX_I! !WASIGO_DROID_I! !WASIGO_GOCOS_I! !WASIGO_CHROME_I! !WASIGO_PE_I! !WASIGO_SAFE_I! !WASIGO_V8_I! !WASIGO_SSL_I! !WASIGO_REACT_I! ^
+  -I "%GO_DIR%" -I "%WASIGO_SRC_INC%" !WASIGO_TURBO_I! !WASIGO_WIN32_I! !WASIGO_NIX_I! !WASIGO_DROID_I! !WASIGO_GOCOS_I! !WASIGO_CHROME_I! !WASIGO_PE_I! !WASIGO_SAFE_I! !WASIGO_V8_I! !WASIGO_SSL_I! !WASIGO_REACT_I! ^
   -DWASIGO_GOCVM=1 !WASIGO_CHROME_D! !WASIGO_SSL_D! !WASIGO_REACT_D! -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID ^
   -lwasi-emulated-mman -lsetjmp ^
-  -o "%OUTWASM%" "%GENCPP%" "%WASIGO_ROOT%\libc\goclibc.c" !WASIGO_WIN32_CC! !WASIGO_NIX_CC! !WASIGO_DROID_CC! !WASIGO_GOCOS_CC! !WASIGO_CHROME_CC! !WASIGO_SAFE_CC! !WASIGO_V8_CC! !WASIGO_REACT_CC! !WASIGO_SSL_L!
+  -o "%OUTWASM%" "%GENCPP%" "%WASIGO_ROOT%\libc\goclibc.c" !WASIGO_TURBO_CC! !WASIGO_WIN32_CC! !WASIGO_NIX_CC! !WASIGO_DROID_CC! !WASIGO_GOCOS_CC! !WASIGO_CHROME_CC! !WASIGO_SAFE_CC! !WASIGO_V8_CC! !WASIGO_REACT_CC! !WASIGO_SSL_L!
 if errorlevel 1 (
   echo wasigocvm clang++ failed
   exit /b 1

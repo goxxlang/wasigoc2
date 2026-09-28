@@ -399,7 +399,9 @@ class WasigocvmNetBridge : public AsyncHostBridge {
     sockaddr_in bound{};
     socklen_t blen = sizeof(bound);
     getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &blen);
-    uint64_t h = alloc(fd, is_udp(network), !is_udp(network));
+    // A ListenPacket socket is bound, not connected: WriteTo has to name
+    // its destination (sendto), so it is a listener too.
+    uint64_t h = alloc(fd, is_udp(network), true);
     complete_ok(c, "ok handle=" + std::to_string(h) + " bound=" + fmt_v4(bound));
   }
 

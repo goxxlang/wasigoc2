@@ -968,6 +968,15 @@ wasigo_add_golden(guacpkg "guacpkg/main.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/time/time.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
   "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/hash/crc32/crc32.go")
+# RmlUi 6.3 core plus GuiKit GML/GS on that same element tree.
+file(GLOB RMLUI_GO CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/rmlui/*.go")
+file(GLOB GUIKIT_GO CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/guikit/*.go")
+wasigo_add_golden(rmluipkg "rmluipkg/main.go"
+  "ok round\\nok sin\\nok cos\\nok atan2\\nok sqrt\\nok floor-fltmax\\nok snap\\nok rect\\nok premul\\nok version\\nok rml-doc\\nok rml-width\\nok gml\\nok count1\\nok invoke\\nok count2\\nok count3\\n"
+  ${RMLUI_GO}
+  ${GUIKIT_GO}
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strings/strings.go"
+  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/strconv/strconv.go")
 # LiveView language: HTML + CSS + JS-events + Jinja2/Go templates in one
 # `live Name { ... }` document. Stock wasip1 has no sockets (http-skip);
 # wasigocvm serves GET / and POST /live/event over HTTP/1.0.

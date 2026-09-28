@@ -14,9 +14,6 @@
 #ifndef _WASI_EMULATED_GETPID
 #define _WASI_EMULATED_GETPID 1
 #endif
-#if defined(__wasi__)
-extern "C" long gocvm_gettid(void);
-#endif
 
 #include "win32/dispatch.h"
 #include "win32/catalog.h"
@@ -88,6 +85,14 @@ extern "C" char** __wasilibc_get_environ(void);
 
 namespace wasmwin32 {
 
+inline unsigned long& wasi_client_pid() {
+  static unsigned long pid = 0;
+  return pid;
+}
+
+// GetCurrentProcessId. The kernel writes the chromium process row here.
+inline unsigned long win32_pid() { return wasi_client_pid(); }
+
 inline bool eq(const char* a, const char* b) {
   return a && b && std::strcmp(a, b) == 0;
 }
@@ -100,7 +105,15 @@ inline std::string err_msg(const char* msg) {
   return std::string("error: ") + msg;
 }
 
+// SetComputerNameA/W/ExW. Empty until set; then every GetComputerName*
+// and `hostname` answer with it instead of the host's name.
+inline std::string& computer_name() {
+  static std::string s;
+  return s;
+}
+
 inline std::string hostname() {
+  if (!computer_name().empty()) return computer_name();
   char buf[256];
   if (gethostname(buf, sizeof(buf)) == 0 && buf[0]) return std::string(buf);
   struct utsname u {};
@@ -142,7 +155,16 @@ inline std::string qpc_ns() {
 inline std::string cwd() {
   char buf[4096];
   if (!getcwd(buf, sizeof(buf))) return err("getcwd");
-  return std::string(buf);
+  std::string p = buf;
+  // A kernel's drive mount (drvfs): /mnt/c/rest is C:\rest.
+  if (p.rfind("/mnt/", 0) == 0 && p.size() >= 6 && p[5] >= 'a' && p[5] <= 'z' &&
+      (p.size() == 6 || p[6] == '/')) {
+    std::string w(1, static_cast<char>(p[5] - 'a' + 'A'));
+    w += ":\\";
+    for (size_t i = 7; i < p.size(); ++i) w += p[i] == '/' ? '\\' : p[i];
+    return w;
+  }
+  return p;
 }
 
 // Process environment owned by this module. WASMGocOS reads it through
@@ -219,6 +241,27 @@ inline void ensure_windows_env() {
       if (!module_env().count(k)) module_env()[k] = row.substr(eqp + 1);
     }
   }
+#if defined(__wasi__)
+  // Every directory the block names exists. On Windows the profile
+  // service makes these at logon; this block is the logon.
+  static const char* const dirs[] = {
+      "SystemRoot",   "ProgramData",       "ProgramFiles",       "ProgramFiles(x86)",
+      "CommonProgramFiles", "CommonProgramFiles(x86)", "ALLUSERSPROFILE", "PUBLIC",
+      "USERPROFILE",  "HOME",              "APPDATA",            "LOCALAPPDATA",
+      "TEMP",         "TMP",               "TMPDIR",
+  };
+  for (const char* k : dirs) {
+    auto it = module_env().find(k);
+    if (it == module_env().end()) continue;
+    const std::string& p = it->second;
+    for (size_t i = 0; i <= p.size(); ++i) {
+      if (i < p.size() && p[i] != '\\' && p[i] != '/') continue;
+      std::string part = p.substr(0, i);
+      if (part.size() <= 2) continue;  // "C:"
+      mkdir(part.c_str(), 0777);
+    }
+  }
+#endif
 }
 
 inline const char* env_get(const char* key) {
@@ -239,6 +282,22 @@ inline void env_set(const char* key, const char* val) {
   }
   module_env()[key] = val;
   setenv(key, val, 1);
+}
+
+// The real Windows version: wasigocvm.bat takes it from the build host's
+// `ver` (GOCVM_NT_VERSION_STR), the same string the kernel banner reports.
+// GOCVM_NT_VERSION overrides it at run time. Never a made-up number: empty
+// when neither is there, and the caller reports that.
+inline std::string nt_version() {
+  if (const char* e = env_get("GOCVM_NT_VERSION")) {
+    while (*e == ' ') ++e;
+    if (*e) return e;
+  }
+#ifdef GOCVM_NT_VERSION_STR
+  return GOCVM_NT_VERSION_STR;
+#else
+  return "";
+#endif
 }
 
 inline std::string windir() {
@@ -395,7 +454,7 @@ inline std::string attrs_ex(const char* path) {
          "\x1f" + std::to_string(static_cast<long long>(st.st_mtime));
 }
 
-inline const char* wsl_command_line(const char* cmd) {
+inline const char* wsl_shell_payload(const char* cmd) {
   if (!cmd) return cmd;
   const char* p = std::strstr(cmd, " /c ");
   if (!p) p = std::strstr(cmd, " /C ");
@@ -407,11 +466,9 @@ inline const char* wsl_command_line(const char* cmd) {
   return cmd;
 }
 
-inline std::string k32_nt_version();
-
 inline std::string wsl_exec(const char* cmd) {
   while (cmd && *cmd == ' ') ++cmd;
-  cmd = wsl_command_line(cmd);
+  cmd = wsl_shell_payload(cmd);
   while (cmd && *cmd == ' ') ++cmd;
   if (!cmd || !cmd[0] || eq(cmd, "uname") || std::strncmp(cmd, "uname ", 6) == 0) {
     return fmt_uname();
@@ -420,14 +477,16 @@ inline std::string wsl_exec(const char* cmd) {
   if (eq(cmd, "hostname")) return hostname();
   if (eq(cmd, "true") || eq(cmd, ":")) return "ok";
   if (eq(cmd, "ver")) {
-    return std::string("Microsoft Windows [Version ") + k32_nt_version() + "]";
+    std::string v = nt_version();
+    if (v.empty()) return err_msg("ver");
+    return "Microsoft Windows [Version " + v + "]";
   }
   if (std::strncmp(cmd, "echo ", 5) == 0) return cmd + 5;
   if (std::strncmp(cmd, "Write-Output ", 13) == 0) return cmd + 13;
   if (eq(cmd, "id")) {
-    return std::string("uid=0 gid=0 pid=") + std::to_string(static_cast<long>(getpid()));
+    return std::string("uid=0 gid=0 pid=") + std::to_string(win32_pid());
   }
-  return err_msg("exec: not a WslExec line (wasigocvm CreateProcessW runs images)");
+  return err_msg("exec: not a WslExec line");
 }
 
 inline std::string wasi_call(const char* api, const char* args);
@@ -463,17 +522,17 @@ inline std::string wasi_device_ioctl(unsigned code, const std::string& in) {
 // Returns the reply string. Prefix "error:" means failure (matches host_win).
 inline std::string wasi_call(const char* api, const char* args) {
   if (!api || !api[0]) return err_msg("win32 needs an API name");
+  k32_direct_load();
   const char* a = args ? args : "";
 
-  if (eq(api, "GetCurrentProcessId")) {
-    return std::to_string(static_cast<long>(getpid()));
+  if (eq(api, "AttachProcess")) {
+    wasi_client_pid() = std::strtoul(a, nullptr, 10);
+    return "ok";
   }
+  if (eq(api, "GetCurrentProcessId")) return std::to_string(win32_pid());
   if (eq(api, "GetCurrentThreadId")) {
-#if defined(__wasi__)
-    return std::to_string(gocvm_gettid());
-#else
+    // Cooperative wasigocvm is one logical thread until pthread ships.
     return "1";
-#endif
   }
   if (eq(api, "GetLastError")) {
     return std::to_string(errno);

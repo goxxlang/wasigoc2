@@ -57,8 +57,8 @@ How to build and run: [wasigocvm.md](wasigocvm.md).
   │  libc / libc++  sockets, mmap, getpid, uname, stat          │
   │  gocvm          net poll · exec · OpenSSL TLS               │
   │  WASMWin32      wasi_host.hpp + catalog.cc                  │
-  │  WASMNix        posix_host.hpp + catalog.cc                 │
-  │  WASMDroid      bionic_host.hpp + catalog.cc                │
+  │  WASMNix        wsl.hpp + catalog.cc                        │
+  │  WASMDroid      phonelink.hpp + catalog.cc                  │
   │  cage pages     cppgc ExecChild, Win32/Nix/Droid (CHPT)     │
   └─────────────────────────────────────────────────────────────┘
            ▲ handles                              ▲ handles
@@ -76,8 +76,8 @@ flowchart TB
   drv --> safe["WASMSafeSpace/<br/>Sandbox + EPT + TPT"]
   drv --> v8["WASMv8bindings/<br/>cppgc + CHPT"]
   drv --> win["WASMWin32/<br/>catalog.cc + wasi_host.hpp"]
-  drv --> nix["WASMNix/<br/>catalog.cc + posix_host.hpp"]
-  drv --> droid["WASMDroid/<br/>catalog.cc + bionic_host.hpp"]
+  drv --> nix["WASMNix/<br/>catalog.cc + wsl.hpp"]
+  drv --> droid["WASMDroid/<br/>catalog.cc + phonelink.hpp"]
   sys --> wasm[".wasigocvm.wasm"]
   ossl --> wasm
   safe --> wasm
@@ -128,7 +128,7 @@ Tags:
 | `kWin32HeapTag` | EPT | HeapAlloc / RtlAllocateHeap root |
 | `kNixCatalogTag` | EPT | `wasmnix_catalog()` name table |
 | `kDroidCatalogTag` | EPT | `wasmdroid_catalog()` name table |
-| `kDroidBinderTag` | EPT | Binder / ashmem / ion root |
+| `kDroidPhoneTag` | EPT | Phone Link root |
 | `kGocOSCatalogTag` | EPT | `wasmgocos_catalog()` name table |
 | `kGocOSDesktopTag` | EPT | DesktopEngine HWND / GPU present root |
 | `kGenericTrustedObjectTag` | TPT | `ExecProc*`, Win32/Nix/Droid process/thread tokens |
@@ -247,19 +247,19 @@ user32 / gdi32 / ole32 / advapi32 / kernel32 / ntdll / ws2_32 / bcrypt / ncrypt 
 
 WslList / WslExec (`uname`, `pwd`, `hostname`, `true`, `:`, `echo`,
 `id`) on the Win32 topic stay Win32 catalog names. The `wsl` and `nix`
-topics hop to `~/WASMNix` `posix_call`. Host PE files map through
+topics hop to `~/WASMNix` `wsl_call`. Host PE files map through
 `~/WASMPELoader`. `CreateProcessW` is not a missing fork: it is a
 `std::thread` child on TPT, same work as `os/exec.start`.
 
 ## WASMNix on the tables
 
-`WASMNix/` in this repo is not rewritten. Two pieces, two roles:
+`WASMNix/` is WSL in this module.
 
 | File | Role in wasm |
 | --- | --- |
-| `include/nix/posix_host.hpp` | libc backend: Linux man-pages / POSIX / WSL / Nix names mapped to POSIX the sysroot actually ships |
-| `src/catalog.cc` | name table (`getpid`, `WslList`, `NixVersion`, …) |
-| `src/host_linux.cc` / `host_wsl.cc` | native libc / `wsl.exe` — **not** linked into the wasm module |
+| `include/nix/wsl.hpp` | install, list, exec, files, `/mnt`, wslpath, `.wslconfig`, `/etc/wsl.conf` |
+| `src/catalog.cc` | WSL name table (`List`, `Install`, `Exec`, `Path`, …) |
+| `src/call.cc` | `wasmnix_call` → `wsl_call` |
 
 ```
 NixKernel (cage, CHPT)
@@ -270,7 +270,7 @@ NixKernel (cage, CHPT)
 ```
 
 `gocvm.Call("linux"|"wsl"|"nix", …)` requires `nix_tables_ok()` before
-`wasmnix::posix_call`. No catalog handle, no call.
+`wasmnix::wsl_call`. No catalog handle, no call.
 
 ## WASMDroid on the tables
 
@@ -278,7 +278,7 @@ NixKernel (cage, CHPT)
 
 | File | Role in wasm |
 | --- | --- |
-| `include/droid/bionic_host.hpp` | Bionic-shaped libc backend (Binder / KVM stay in-module) |
+| `include/droid/phonelink.hpp` | Phone Link (YourPhone, `ms-phone:`) |
 | `src/catalog.cc` | name table (`getpid`, `BINDER_WRITE_READ`, `KVM_RUN`, …) |
 | `src/host_linux.cc` / `host_win.cc` | native hop — **not** linked into the wasm module |
 
@@ -288,11 +288,11 @@ DroidKernel (cage, CHPT)
   thread_h   ──TPT──► DroidToken{"thread"}
   session_h  ──CHPT──► DroidSession{"session"}
   catalog_h  ──EPT──► WasmDroidApi[] from catalog.cc
-  binder_h   ──EPT──► Binder / ashmem / ion root
+  phone_h    ──EPT──► Phone Link root
 ```
 
-`gocvm.Call("android"|"binder"|"kvm", …)` requires `droid_tables_ok()`
-before `wasmdroid::bionic_call`. No catalog handle, no call.
+`gocvm.Call("android"|"phonelink", …)` requires `droid_tables_ok()`
+before `wasmdroid::phonelink_call`. No catalog handle, no call.
 
 ## Exec is not simulated
 
@@ -337,8 +337,8 @@ Named artifacts stay themselves. The machine wires them.
 | `WASMSafeSpace/` | `sandbox.cc`, EPT, TPT | rewrite the cage |
 | `WASMv8bindings/` | cppgc heap + CHPT | invent a second GC |
 | `WASMWin32/` | `wasi_host.hpp`, `catalog.cc` | `host_win.cc` as a second ABI |
-| `WASMNix/` | `posix_host.hpp`, `catalog.cc` | `host_linux.cc` as a second ABI |
-| `WASMDroid/` | `bionic_host.hpp`, `catalog.cc` | `host_linux.cc` / `host_win.cc` as a second ABI |
+| `WASMNix/` | `wsl.hpp`, `catalog.cc`, `call.cc` | a man-page catalog or `wsl.exe` as a second ABI |
+| `WASMDroid/` | `phonelink.hpp`, `catalog.cc` | a second Android libc |
 | `WASMGocOS/` | `host.hpp`, `gockrnl.hpp`, `gocsys.hpp`, `catalog.cc` | `host_win.cc` as a second ABI; malloc in GocKrnl |
 | `WASMPELoader/` | `include/wasmpe/loader.hpp` | PE-to-wasm JIT |
 | `WASMLoader/` | load/call as-is (wasmbin + loader packages) on the Go++ wazero interpreter | os/exec stand-in for the guest; shoving original wazero sources |
@@ -405,7 +405,7 @@ registers an in-module bridge; stock wasip1 does not.
 | `crypto/tls` | `tls.dial` / `tls.io.*` | OpenSSL wasm, optional `Config.ServerName` SNI |
 | `win32` | `win32` | WASMWin32 catalog on EPT |
 | `linux` | `linux` / `wsl` / `nix` | WASMNix catalog on EPT |
-| `android` | `android` / `binder` / `kvm` | WASMDroid catalog + Binder on EPT |
+| `android` | `android` / `phonelink` | Phone Link catalog on EPT |
 | `gocos` | `gocos` / `gockrnl` / `gocsys` / `gocdesk` | edge kernel; every hop is k32 / nix; vmem on EPT |
 
 Do not put BusyBox, `cmd.exe`, or `android.jar` stand-ins in `stdlib/`.

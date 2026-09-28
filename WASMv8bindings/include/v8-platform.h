@@ -72,18 +72,30 @@ class TaskRunner {
   virtual bool IdleTasksEnabled() { return false; }
 };
 
+// Job APIs match real V8 include/v8-platform.h. This port has no thread
+// pool (wasm32-wasip1 is single-threaded): cppgc::Platform::PostJob runs
+// kUserBlocking/kUserVisible on the posting thread before returning, and
+// defers kBestEffort until JobHandle::Join() (or handle destruction).
 class JobDelegate {
  public:
   virtual ~JobDelegate() = default;
   virtual bool ShouldYield() = 0;
+  virtual void NotifyConcurrencyIncrease() = 0;
+  virtual uint8_t GetTaskId() = 0;
+  virtual bool IsJoiningThread() const = 0;
 };
 
 class JobHandle {
  public:
   virtual ~JobHandle() = default;
-  virtual void Join() {}
-  virtual void Cancel() {}
-  virtual bool IsRunning() { return false; }
+  virtual void NotifyConcurrencyIncrease() = 0;
+  virtual void Join() = 0;
+  virtual void Cancel() = 0;
+  virtual void CancelAndDetach() = 0;
+  virtual bool IsActive() = 0;
+  virtual bool IsValid() = 0;
+  virtual bool UpdatePriorityEnabled() const { return false; }
+  virtual void UpdatePriority(TaskPriority new_priority) { (void)new_priority; }
 };
 
 class JobTask {
