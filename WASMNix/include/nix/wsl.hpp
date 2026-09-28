@@ -217,6 +217,38 @@ inline void seed_distro(Distro& d) {
   d.cwd = "/root";
 }
 
+// A distro's init when it boots as a Linux VM (/sbin/wsl-init on its root
+// disk): the kernel filesystems, the WSL environment, a login shell on the
+// console (ttyS0), and -- when that shell exits -- the disk synced and
+// remounted read-only before the power-off, so it is clean for next boot.
+inline std::string distro_init(const std::string& name) {
+  std::string quoted = "'";
+  for (char c : name) {
+    if (c == '\'')
+      quoted += "'\\''";
+    else
+      quoted.push_back(c);
+  }
+  quoted += "'";
+  return "#!/bin/sh\n"
+         "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
+         "export HOME=/root TERM=vt100 WSL_DISTRO_NAME=" + quoted + "\n"
+         "mount -t proc proc /proc\n"
+         "mount -t sysfs sysfs /sys\n"
+         // The kernel mounts devtmpfs on /dev itself once it mounts a disk root.
+         "grep -q ' /dev devtmpfs ' /proc/mounts || mount -t devtmpfs devtmpfs /dev\n"
+         "mkdir -p /dev/pts /dev/shm /run /tmp\n"
+         "mount -t devpts devpts /dev/pts\n"
+         "mount -t tmpfs tmpfs /run\n"
+         "mount -t tmpfs tmpfs /tmp\n"
+         "hostname " + quoted + "\n"
+         "cd /root\n"
+         "if command -v setsid >/dev/null; then setsid -c /bin/sh -l; else /bin/sh -l; fi\n"
+         "sync\n"
+         "mount -o remount,ro / 2>/dev/null\n"
+         "poweroff -f\n";
+}
+
 inline void start_distro(Distro& d) {
   if (d.running) return;
   d.running = true;
