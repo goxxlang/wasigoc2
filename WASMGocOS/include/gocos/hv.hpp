@@ -1,9 +1,16 @@
 #ifndef WASMGOCOS_INCLUDE_GOCOS_HV_HPP_
 #define WASMGOCOS_INCLUDE_GOCOS_HV_HPP_
 
-// gocvm hypervision. The only hops GocKrnl / GocSys / GocDesk / GocNix
-// may take: k32 (~/WASMWin32 wasi_call) and nix (~/WASMNix wsl_call)
-// for WSL. No libc, no kernel32 import, no wineserver.
+// gocvm hypervision. The only hop GocKrnl / GocSys / GocDesk / GocNix
+// may take. The machine is TurboSpace's vCPU: one WHv partition, the VM
+// window at GPA kVmGpaBase. k32 (~/WASMWin32) and nix (~/WASMNix) stay
+// the syscall catalogs on that hop. No libc, no kernel32 import, no
+// wineserver, no wsl.exe.
+//
+// Native and wasm are the same hop. k32 is a vCPU exit
+// (wasmturbo_vcpu_syscall). The partition behind that symbol is the
+// process's WinHvPlatform partition; in a wasigocvm module the
+// WinHvPlatform DLL catalog is that partition.
 
 inline bool eq(const char* a, const char* b) {
   return a && b && std::strcmp(a, b) == 0;
@@ -51,7 +58,24 @@ inline void copy_field(char* dst, size_t cap, const std::string& src) {
   copy_field(dst, cap, src.c_str());
 }
 
+extern "C" int32_t wasmturbo_vcpu_attach(char* out, unsigned cap);
+extern "C" int32_t wasmturbo_vcpu_map(uint32_t bytes, char* out, unsigned cap);
+extern "C" int32_t wasmturbo_vcpu_unmap(const char* gpa);
+extern "C" int32_t wasmturbo_vcpu_syscall(const char* api, const char* args, char* out,
+                                          unsigned cap);
+extern "C" uint32_t wasmturbo_vcpu_k32_exits(void);
+
 namespace hv {
+
+inline bool vcpu_attached() {
+  static int state = 0;
+  if (state == 0) {
+    char buf[160];
+    buf[0] = 0;
+    state = wasmturbo_vcpu_attach(buf, sizeof(buf)) == 0 ? 1 : -1;
+  }
+  return state == 1;
+}
 
 inline bool has_k32() {
 #if defined(WASMGOCOS_HAS_WIN32)
@@ -70,6 +94,12 @@ inline bool has_nix() {
 }
 
 inline const char* name() {
+  if (vcpu_attached()) {
+    if (has_k32() && has_nix()) return "vcpu,k32,nix";
+    if (has_k32()) return "vcpu,k32";
+    if (has_nix()) return "vcpu,nix";
+    return "vcpu";
+  }
   if (has_k32() && has_nix()) return "k32,nix";
   if (has_k32()) return "k32";
   if (has_nix()) return "nix";
@@ -77,27 +107,21 @@ inline const char* name() {
 }
 
 inline std::string k32(const char* api, const char* args) {
-#if defined(WASMGOCOS_K32_NATIVE)
-  char buf[65536];
-  buf[0] = 0;
-  // wasmwin32_call's return code is the only success/failure signal —
-  // an empty buf on success (e.g. GetProcessOutput with nothing new
-  // to read yet) is not an error, and must not be reported as one.
-  int rc = wasmwin32_call(api, args ? args : "", buf, sizeof(buf));
-  if (rc != 0) return err_msg(buf[0] ? buf : api);
-  return std::string(buf);
-#elif defined(WASMGOCOS_HAS_WIN32)
-  return wasmwin32::wasi_call(api, args ? args : "");
-#else
-  (void)api;
-  (void)args;
-  return err_msg("gocvm: k32 hop required");
-#endif
+  if (!vcpu_attached()) return err_msg(api ? api : "vcpu");
+  // Heap, not a stack array: the wasigocvm stack is one 64KB page, and
+  // this reply is the same size on every build.
+  std::string buf(65536, '\0');
+  int rc = wasmturbo_vcpu_syscall(api, args ? args : "", buf.data(),
+                                  static_cast<unsigned>(buf.size()));
+  if (rc != 0) return err_msg(buf[0] ? buf.c_str() : api);
+  return std::string(buf.c_str());
 }
 
 inline std::string nix(const char* api, const char* args) {
-#if defined(WASMGOCOS_HAS_NIX)
+#if defined(WASMGOCOS_NIX_WSL)
   return wasmnix::wsl_call(api, args ? args : "");
+#elif defined(WASMGOCOS_HAS_NIX)
+  return wasmnix::posix_call(api, args ? args : "");
 #else
   (void)api;
   (void)args;

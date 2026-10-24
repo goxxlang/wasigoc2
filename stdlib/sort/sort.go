@@ -1,4 +1,4 @@
-// Tiny subset of sort: in-place insertion sort of []int and []string.
+// Tiny subset of sort: insertion sort of []int and []string; Slice is heapsort.
 package sort
 
 func Ints(x []int) {
@@ -98,17 +98,45 @@ func IsSorted(data Interface) bool {
 // idiom still works: `xs` and `x` share one backing array (see README's
 // Rosetta table on wasigo::Slice), so sorting `x` in place reorders the
 // closure's `xs` too.
+//
+// Slice is heapsort: O(n log n) and, like real Go's, not stable.
+// SliceStable is insertion sort: stable, O(n^2).
 func Slice[T any](x []T, less func(i int, j int) bool) {
+	n := len(x)
+	for i := n/2 - 1; i >= 0; i-- {
+		siftDown(x, less, i, n)
+	}
+	for end := n - 1; end > 0; end-- {
+		x[0], x[end] = x[end], x[0]
+		siftDown(x, less, 0, end)
+	}
+}
+
+// siftDown restores the max-heap below root within x[:n].
+func siftDown[T any](x []T, less func(i int, j int) bool, root int, n int) {
+	for {
+		child := 2*root + 1
+		if child >= n {
+			return
+		}
+		if child+1 < n && less(child, child+1) {
+			child++
+		}
+		if !less(root, child) {
+			return
+		}
+		x[root], x[child] = x[child], x[root]
+		root = child
+	}
+}
+
+func SliceStable[T any](x []T, less func(i int, j int) bool) {
 	n := len(x)
 	for i := 1; i < n; i++ {
 		for j := i; j > 0 && less(j, j-1); j-- {
 			x[j], x[j-1] = x[j-1], x[j]
 		}
 	}
-}
-
-func SliceStable[T any](x []T, less func(i int, j int) bool) {
-	Slice(x, less)
 }
 
 func SliceIsSorted[T any](x []T, less func(i int, j int) bool) bool {

@@ -45,9 +45,17 @@ These packages talk `gocvm.Call` into wasigocvm
 | `android` | Phone Link catalog on EPT, process/thread on TPT, session on CHPT; `phonelink_call` |
 | `gocos` | edge kernel; GocKrnl / GocSys hop k32 and nix through gocvm hypervision; vmem on EPT |
 | `crypto/tls` | OpenSSL wasm, memory BIOs (WASMLime `TlsTransport`), not Schannel |
+| `webgpu` | the JS host's WebGPU as a compute device: buffers, WGSL shaders, pipelines, bind groups, and a `Program` of writes/dispatches/copies/reads run in one call. `WASMWebGPU/` (catalog + `webgpu.h` remoted over the suspending import `webgpu.batch`), linked only into programs that import it; WASMJsLoader answers the import |
 
 `net.Pipe()` is an in-process duplex. `net/http` is HTTP/1.0 over `net`
 (`Get`/`Post`/`Serve`/`ServeMux`).
+
+## Model formats
+
+| Package | What |
+| --- | --- |
+| `safetensors` | header parse; tensors streamed front to back a piece at a time (`Stream` / `Reader.Next`), no seeking |
+| `tokenizers` | Hugging Face `tokenizer.json`: byte-level BPE, added specials, the Llama 3 / cl100k Split pre-tokenizer (by hand; any other pattern is refused) |
 
 ## n/a on this target
 

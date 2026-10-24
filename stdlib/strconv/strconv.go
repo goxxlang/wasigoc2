@@ -208,43 +208,105 @@ func ParseBool(s string) (bool, error) {
 	return false, errors.New("strconv.ParseBool: invalid syntax")
 }
 
+// pow10 is 10**n by squaring; exact for n <= 22.
+func pow10(n int) float64 {
+	r := 1.0
+	b := 10.0
+	for n > 0 {
+		if n&1 == 1 {
+			r = r * b
+		}
+		b = b * b
+		n = n >> 1
+	}
+	return r
+}
+
+// ParseFloat parses a decimal float: [+-]digits[.digits][(e|E)[+-]digits].
+// The digits are read as an integer mantissa and a decimal exponent, then
+// scaled once, so a number of up to 19 significant digits and an exponent
+// of at most 22 comes out exact.
 func ParseFloat(s string) (float64, error) {
-	if len(s) == 0 {
-		return 0, errors.New("strconv.ParseFloat: invalid syntax")
-	}
-	sign := 1.0
+	bad := errors.New("strconv.ParseFloat: parsing \"" + s + "\": invalid syntax")
 	i := 0
-	if s[0:1] == "-" {
-		sign = -1.0
-		i = 1
+	neg := false
+	if i < len(s) && (s[i] == 43 || s[i] == 45) {
+		neg = s[i] == 45
+		i++
 	}
-	if i >= len(s) {
-		return 0, errors.New("strconv.ParseFloat: invalid syntax")
-	}
-	n := 0.0
+	var mant uint64
+	digits := 0
+	exp := 0
 	seen := false
 	dot := false
-	frac := 0.1
 	for ; i < len(s); i++ {
-		ci := int(s[i])
-		if ci >= 48 && ci <= 57 {
-			if dot {
-				n = n + float64(ci-48)*frac
-				frac = frac * 0.1
-			} else {
-				n = n*10.0 + float64(ci-48)
-			}
+		c := s[i]
+		if c >= 48 && c <= 57 {
 			seen = true
+			if digits < 19 {
+				mant = mant*10 + uint64(c-48)
+				if mant != 0 {
+					digits++
+				}
+				if dot {
+					exp--
+				}
+			} else if !dot {
+				exp++
+			}
 			continue
 		}
-		if !dot && s[i:i+1] == "." {
+		if c == 46 && !dot {
 			dot = true
 			continue
 		}
-		return 0, errors.New("strconv.ParseFloat: invalid syntax")
+		break
 	}
 	if !seen {
-		return 0, errors.New("strconv.ParseFloat: invalid syntax")
+		return 0, bad
 	}
-	return n * sign, nil
+	if i < len(s) && (s[i] == 101 || s[i] == 69) {
+		i++
+		eneg := false
+		if i < len(s) && (s[i] == 43 || s[i] == 45) {
+			eneg = s[i] == 45
+			i++
+		}
+		e := 0
+		eseen := false
+		for ; i < len(s) && s[i] >= 48 && s[i] <= 57; i++ {
+			if e < 100000 {
+				e = e*10 + int(s[i]-48)
+			}
+			eseen = true
+		}
+		if !eseen {
+			return 0, bad
+		}
+		if eneg {
+			e = -e
+		}
+		exp += e
+	}
+	if i != len(s) {
+		return 0, bad
+	}
+	f := float64(mant)
+	if exp > 0 {
+		for exp > 22 {
+			f = f * 1e22
+			exp -= 22
+		}
+		f = f * pow10(exp)
+	} else if exp < 0 {
+		for exp < -22 {
+			f = f / 1e22
+			exp += 22
+		}
+		f = f / pow10(-exp)
+	}
+	if neg {
+		f = -f
+	}
+	return f, nil
 }

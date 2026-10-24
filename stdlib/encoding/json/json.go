@@ -572,10 +572,7 @@ func (p *parser) parseNumber() (any, error) {
 			p.pos++
 		}
 	}
-	// Scientific notation is consumed (to keep the parser in sync with the
-	// rest of a larger document) but strconv.ParseFloat here doesn't
-	// support exponents (see README's stdlib tracker), so a number written
-	// that way will surface as an error rather than a silently wrong value.
+	// Exponent (strconv.ParseFloat reads it).
 	if p.pos < len(p.s) && (p.s[p.pos] == 101 || p.s[p.pos] == 69) {
 		p.pos++
 		if p.pos < len(p.s) && (p.s[p.pos] == 43 || p.s[p.pos] == 45) {

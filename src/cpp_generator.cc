@@ -3039,7 +3039,8 @@ class Generator {
       if (src_type && src_type->kind == TypeKind::Named &&
           (src_type->name == "byte" || src_type->name == "rune" || src_type->name == "int32" ||
            src_type->name == "uint8")) {
-        return "std::string(1, static_cast<char>(" + src_str + "))";
+        // Go: string(x) of an integer is x's UTF-8 encoding, not a byte.
+        return "wasigo::string_from_rune(static_cast<int64_t>(" + src_str + "))";
       }
       if (IsByteSlice(src_type)) return "wasigo::string_from_bytes(" + src_str + ")";
       if (IsRuneSlice(src_type)) return "wasigo::string_from_runes(" + src_str + ")";

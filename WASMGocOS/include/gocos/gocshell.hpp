@@ -117,4 +117,58 @@ inline std::string gocshell_pwsh(const char* line) {
   return gocshell_cmd(s.c_str());
 }
 
+// Interactive console. The whole terminal — echo, line editing, the prompt,
+// and command dispatch — lives here in the module, not in the guest's Go and
+// not in JS. The browser hop only moves raw bytes: it feeds keystrokes in and
+// blits the returned bytes to the display. State (the line being typed)
+// persists across calls, so input may arrive one byte or many at a time.
+struct GocConsole {
+  std::string line;
+  bool primed = false;
+};
+
+inline GocConsole& gocconsole() {
+  static GocConsole c;
+  return c;
+}
+
+inline void gocconsole_reset() { gocconsole() = GocConsole{}; }
+
+// Feed raw input bytes; return the bytes to write to the display.
+inline std::string gocshell_console(const char* input) {
+  GocConsole& c = gocconsole();
+  std::string out;
+  if (!c.primed) {
+    c.primed = true;
+    out += gocshell_conhost();
+    out += gocshell_prompt();
+  }
+  for (const char* p = input ? input : ""; *p; ++p) {
+    unsigned char ch = static_cast<unsigned char>(*p);
+    if (ch == '\r' || ch == '\n') {
+      out += "\r\n";
+      std::string reply = gocshell_cmd(c.line.c_str());
+      c.line.clear();
+      if (!reply.empty()) {
+        out += reply;
+        if (reply.back() != '\n') out += "\r\n";
+      }
+      out += gocshell_prompt();
+    } else if (ch == 0x08 || ch == 0x7f) {  // backspace / delete
+      if (!c.line.empty()) {
+        c.line.pop_back();
+        out += "\b \b";
+      }
+    } else if (ch == 0x03) {  // Ctrl-C: abandon the line
+      c.line.clear();
+      out += "^C\r\n";
+      out += gocshell_prompt();
+    } else if (ch >= 0x20) {  // printable: buffer and echo
+      c.line.push_back(static_cast<char>(ch));
+      out += static_cast<char>(ch);
+    }
+  }
+  return out;
+}
+
 #endif  // WASMGOCOS_INCLUDE_GOCOS_GOCSHELL_HPP_

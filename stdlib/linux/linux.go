@@ -28,7 +28,9 @@ func Call(api string, arg string) (string, error) {
 	if arg != "" {
 		payload = api + "\x1f" + arg
 	}
-	return call("wsl", payload)
+	// "linux" reaches wasmnix::wsl_call. HeapVM's Win32 bridge owns
+	// "wsl" and "nix" and answers those as WslExec and NixVersion.
+	return call("linux", payload)
 }
 
 func List() (string, error) {

@@ -1,0 +1,2043 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Hodge-3.5, the Encryptid EdgeAI assistant. A language model that runs on this device.">
+<title>Hodge-3.5 · Encryptid EdgeAI</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#07090d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Hodge-3.5">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #07090d;
+    --ink: #ece7df;
+    --muted: #8e96a3;
+    --faint: #5e6673;
+    --copper: #e8a87c;
+    --copper-deep: #b8744a;
+    --line: rgba(232, 168, 124, 0.22);
+    --panel: rgba(12, 15, 22, 0.78);
+    --user: rgba(232, 168, 124, 0.14);
+    --err: #f0a8a0;
+    --ok: #d7c4ae;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background:
+      radial-gradient(900px 480px at 100% -10%, rgba(232, 168, 124, 0.16), transparent 55%),
+      radial-gradient(700px 420px at -10% 110%, rgba(90, 110, 150, 0.14), transparent 50%),
+      var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+  }
+  button, textarea, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; opacity: 0.45; }
+  .top {
+    height: 58px; display: flex; align-items: center; gap: 14px;
+    padding: 0 22px; border-bottom: 1px solid rgba(255,255,255,0.06);
+    background: rgba(7, 9, 13, 0.72); backdrop-filter: blur(16px);
+    position: sticky; top: 0; z-index: 2;
+  }
+  .logo { letter-spacing: 0.18em; font-size: 12px; font-weight: 700; color: var(--copper); }
+  .product { font-size: 16px; font-weight: 650; letter-spacing: -0.02em; }
+  .mode-pick { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
+  #mode {
+    display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%;
+    border: 1px solid rgba(255,255,255,0.1); background: transparent; color: var(--muted);
+    border-radius: 999px; padding: 4px 10px 4px 12px; font-size: 13px;
+  }
+  #mode:not(:disabled):hover, #mode[aria-expanded="true"] { border-color: var(--line); color: var(--ink); }
+  #mode:disabled { opacity: 0.6; }
+  #mode b { font-weight: 600; color: var(--copper); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #instrument {
+    border: 1px solid rgba(255,255,255,0.1); background: transparent; color: var(--muted);
+    border-radius: 999px; padding: 4px 10px; font-size: 12px; white-space: nowrap;
+  }
+  #instrument[aria-pressed="true"] { border-color: var(--line); color: var(--copper); }
+  #instrument[hidden] { display: none; }
+  #mode::after { content: "▾"; color: var(--faint); font-size: 11px; }
+  .mode-menu {
+    position: absolute; left: 0; top: calc(100% + 8px); z-index: 30; width: min(380px, 92vw);
+    display: grid; gap: 4px; padding: 6px; border-radius: 14px;
+    border: 1px solid var(--line); background: rgba(14, 17, 25, 0.98);
+    box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+  }
+  .mode-menu[hidden] { display: none; }
+  .mode-menu button {
+    display: grid; gap: 2px; text-align: left; border: 1px solid transparent; background: transparent;
+    color: var(--ink); padding: 8px 10px; border-radius: 10px;
+  }
+  .mode-menu button:hover:not(:disabled), .mode-menu button:focus-visible { background: rgba(255,255,255,0.05); outline: none; }
+  .mode-menu button:disabled { opacity: 0.45; cursor: default; }
+  .mode-menu button[aria-checked="true"] { border-color: var(--line); }
+  .mode-menu button[aria-checked="true"] b { color: var(--copper); }
+  .mode-menu button span { color: var(--muted); font-size: 12px; }
+  .mode-menu button i { color: var(--faint); font-size: 11.5px; font-style: normal; }
+  .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .mode-grid button { border-color: rgba(255,255,255,0.06); }
+  .mode-axes { display: flex; justify-content: space-between; color: var(--faint); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 4px 0; }
+  .mode-menu hr { border: 0; border-top: 1px solid rgba(255,255,255,0.06); margin: 2px; }
+  .ctx { display: inline-flex; align-items: center; gap: 6px; color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+  .ctx[hidden] { display: none; }
+  .ctx i { width: 64px; height: 4px; border-radius: 99px; background: rgba(255,255,255,0.08); overflow: hidden; display: block; }
+  .ctx i b { display: block; height: 100%; width: 0; background: var(--copper); transition: width 0.3s; }
+  .ctx.warn { color: var(--copper); }
+  .handoff {
+    width: fit-content; max-width: min(640px, 100%); margin: 6px auto; padding: 4px 12px;
+    border: 1px dashed rgba(255,255,255,0.12); border-radius: 999px; color: var(--faint); font-size: 12px;
+  }
+  .status {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 999px;
+    padding: 5px 12px; font-size: 12px; color: var(--muted); white-space: nowrap;
+  }
+  .status i {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--faint); display: block;
+  }
+  .status.busy { color: var(--copper); border-color: var(--line); }
+  .status.busy i { background: var(--copper); box-shadow: 0 0 10px var(--copper); animation: pulse 1.2s ease-in-out infinite; }
+  .status.ready { color: var(--ok); border-color: rgba(215, 196, 174, 0.35); }
+  .status.ready i { background: #c4a574; }
+  .status.fail { color: var(--err); border-color: rgba(240, 168, 160, 0.4); }
+  .status.fail i { background: var(--err); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .msg.assistant .bubble .load {
+    display: inline-flex; align-items: center; gap: 8px;
+    color: var(--copper); min-height: 1.4em; white-space: nowrap;
+  }
+  .msg.assistant .bubble .load i {
+    width: 14px; height: 14px; border-radius: 50%; flex: none;
+    border: 2px solid rgba(232, 168, 124, 0.28);
+    border-top-color: var(--copper);
+    background: transparent;
+    animation: spin 0.8s linear infinite;
+  }
+  .msg.assistant .bubble .lead { margin-bottom: 8px; white-space: pre-wrap; }
+  .app { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: calc(100% - 58px); }
+  aside#side {
+    border-right: 1px solid rgba(255,255,255,0.06);
+    padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 14px;
+    background: rgba(8, 10, 14, 0.45);
+  }
+  .new {
+    border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+    background: linear-gradient(180deg, rgba(232,168,124,0.2), rgba(232,168,124,0.05));
+    color: #ffe8d4; font-weight: 650;
+  }
+  .new:not(:disabled):hover { filter: brightness(1.08); }
+  .kicker { color: var(--faint); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+  .foot { margin-top: auto; color: var(--faint); font-size: 12px; letter-spacing: 0.04em; }
+  .foot a { color: inherit; }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .stage { flex: 1; overflow: auto; }
+  .loading, .thread { width: min(760px, calc(100% - 40px)); margin: 0 auto; }
+  .loading {
+    min-height: calc(100vh - 180px); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 8px;
+  }
+  .mark { font-size: 13px; letter-spacing: 0.2em; color: var(--copper); font-weight: 700; }
+  .loading h1 { margin: 0; font-size: 34px; font-weight: 640; letter-spacing: -0.03em; }
+  .loading p { margin: 0; color: var(--muted); max-width: 420px; }
+  .bar {
+    width: min(360px, 80%); height: 3px; margin-top: 18px; border-radius: 99px;
+    background: rgba(255,255,255,0.08); overflow: hidden;
+  }
+  .bar span {
+    display: block; height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--copper-deep), #ffe1c4);
+    box-shadow: 0 0 16px rgba(232, 168, 124, 0.7);
+  }
+  .thread { padding: 28px 0 12px; display: flex; flex-direction: column; gap: 16px; }
+  .msg { display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .bubble {
+    max-width: min(640px, 100%); padding: 12px 14px; border-radius: 16px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.user .bubble { background: var(--user); border: 1px solid var(--line); border-bottom-right-radius: 5px; }
+  .msg.assistant .bubble {
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+    border-bottom-left-radius: 5px;
+  }
+  .who { display: block; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
+  .meta { margin-top: 8px; color: var(--faint); font-size: 12px; }
+  .notice { color: var(--err); font-size: 13.5px; padding: 8px 2px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .chips button {
+    border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.03);
+    border-radius: 999px; padding: 8px 12px; color: var(--ink);
+  }
+  .chips button:hover { border-color: var(--line); }
+  .composer {
+    width: min(760px, calc(100% - 32px)); margin: 0 auto 18px;
+    display: flex; gap: 8px; align-items: flex-end;
+    padding: 8px; border-radius: 18px;
+    border: 1px solid var(--line);
+    background: rgba(10, 12, 18, 0.9);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  textarea {
+    flex: 1; resize: none; border: 0; background: transparent; outline: none;
+    padding: 10px 8px; max-height: 160px; min-height: 44px;
+  }
+  #send, #stop, #think {
+    border: 0; border-radius: 12px; padding: 10px 16px; font-weight: 650;
+  }
+  #send { background: linear-gradient(180deg, #f0c7a4, #c4845a); color: #2a160c; }
+  #stop { background: #2a1614; color: var(--err); border: 1px solid rgba(240,168,160,0.35); }
+  #think {
+    border: 1px solid rgba(255,255,255,0.12);
+    background: transparent; color: var(--faint);
+  }
+  #think[aria-pressed="true"] {
+    color: #2a160c;
+    background: linear-gradient(180deg, #f0c7a4, #c4845a);
+    border-color: transparent;
+  }
+  .compose-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .compose-main textarea { flex: none; width: 100%; }
+  .tool-pick { position: relative; }
+  #plus {
+    width: 40px; height: 40px; border-radius: 12px; padding: 0;
+    border: 1px solid rgba(255,255,255,0.12); background: transparent;
+    color: var(--muted); font-size: 22px; line-height: 1;
+  }
+  #plus:not(:disabled):hover, #plus[aria-expanded="true"] { color: var(--ink); border-color: var(--line); }
+  .tool-menu {
+    position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 20; min-width: 200px;
+    display: grid; gap: 2px; padding: 6px; border-radius: 14px;
+    border: 1px solid var(--line); background: rgba(14, 17, 25, 0.98);
+    box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+  }
+  .tool-menu[hidden] { display: none; }
+  .tool-menu button {
+    display: flex; align-items: center; gap: 10px; text-align: left;
+    border: 0; background: transparent; color: var(--ink); padding: 8px 10px; border-radius: 9px;
+  }
+  .tool-menu button:hover, .tool-menu button:focus-visible { background: rgba(255,255,255,0.05); outline: none; }
+  .tool-menu button::before {
+    content: ""; width: 14px; height: 14px; flex: none; border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.25);
+  }
+  .tool-menu button[aria-checked="true"]::before {
+    border-color: transparent; background: linear-gradient(180deg, #f0c7a4, #c4845a);
+  }
+  .picked { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 6px 0; }
+  .picked[hidden] { display: none; }
+  .picked button {
+    border: 1px solid var(--line); background: rgba(240,199,164,0.08); color: var(--copper);
+    border-radius: 999px; padding: 3px 10px; font-size: 12.5px;
+  }
+  .picked button:hover { background: rgba(240,199,164,0.16); }
+  .thoughts { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .thoughts:empty { display: none; }
+  .tool {
+    max-width: min(640px, 100%); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
+    background: rgba(12, 15, 22, 0.7); padding: 10px 12px; font-size: 13.5px;
+  }
+  .tool.bad { border-color: rgba(240, 168, 160, 0.3); }
+  .tool.ask { border-color: var(--line); }
+  .tool.skipped { opacity: 0.6; }
+  .tool-top { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+  .tool-top b { color: var(--copper); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+  .tool-what { color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool pre {
+    margin: 8px 0 0; padding: 8px 10px; border-radius: 9px; background: rgba(0,0,0,0.35);
+    font: 12.5px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+    max-height: 320px; overflow: auto;
+  }
+  .tool p { margin: 8px 0 0; color: var(--muted); }
+  .tool a { color: var(--copper); }
+  .tool .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .tool .acts button {
+    border: 1px solid rgba(255,255,255,0.12); background: transparent; border-radius: 10px; padding: 7px 12px;
+  }
+  .tool .acts button.go { background: linear-gradient(180deg, #f0c7a4, #c4845a); color: #2a160c; border-color: transparent; font-weight: 650; }
+  .tool .md { margin-top: 6px; }
+  .tool .md h3, .tool .md h4, .tool .md h5 { margin: 10px 0 4px; font-weight: 650; letter-spacing: -0.01em; }
+  .tool .md h3 { font-size: 17px; } .tool .md h4 { font-size: 15px; } .tool .md h5 { font-size: 14px; color: var(--muted); }
+  .tool .md p { color: var(--ink); margin: 6px 0; }
+  .tool .md ul { margin: 6px 0; padding-left: 20px; }
+  .tool .md blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--line); color: var(--muted); }
+  .tool ul.tasks { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 5px; }
+  .tool .task { display: flex; gap: 10px; align-items: baseline; }
+  .tool .task-key { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--faint); white-space: nowrap; }
+  .tool .task-state { font-size: 11px; border: 1px solid rgba(255,255,255,0.1); border-radius: 999px; padding: 0 7px; color: var(--muted); white-space: nowrap; }
+  .tool .task.done span:last-child { text-decoration: line-through; color: var(--faint); }
+  .tool .task.in_progress .task-state { color: var(--copper); border-color: var(--line); }
+  .menu { display: none; border: 0; background: transparent; font-size: 20px; padding: 4px 6px; color: var(--ink); }
+  aside { min-height: 0; overflow: hidden; }
+  .chat-search {
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.03);
+    padding: 8px 10px; font-size: 13.5px; outline: none;
+  }
+  .chat-search:focus { border-color: var(--line); }
+  .chats { flex: 1; min-height: 120px; overflow: auto; margin: 0 -6px; padding: 0 6px; }
+  .chats-group { color: var(--faint); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; margin: 12px 6px 4px; }
+  .chats-empty { color: var(--faint); font-size: 13px; margin: 8px 6px; }
+  .chat-row { display: flex; align-items: center; border-radius: 9px; }
+  .chat-row:hover, .chat-row.on { background: rgba(255,255,255,0.05); }
+  .chat-row.on .chat-open { color: #ffe8d4; }
+  .chat-open {
+    flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; padding: 7px 8px;
+    font-size: 13.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .chat-act { border: 0; background: transparent; color: var(--faint); padding: 4px 6px; font-size: 12px; opacity: 0; }
+  .chat-row:hover .chat-act, .chat-row.on .chat-act, .chat-act:focus { opacity: 1; }
+  .chat-act:hover { color: var(--ink); }
+  .chat-act.armed { color: var(--err); opacity: 1; }
+  .chat-edit { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: rgba(0,0,0,0.3); padding: 6px 8px; font-size: 13.5px; outline: none; }
+  .stage { position: relative; }
+  .to-end {
+    position: sticky; bottom: 12px; left: calc(50% - 18px); width: 36px; height: 36px; border-radius: 50%;
+    border: 1px solid var(--line); background: rgba(10,12,18,0.92); color: var(--ink); display: block;
+  }
+  .msg { flex-direction: column; }
+  .msg.user { align-items: flex-end; }
+  .msg.assistant { align-items: flex-start; }
+  .msg.assistant .bubble { white-space: normal; }
+  .msg.assistant .bubble > div.live { white-space: pre-wrap; }
+  .acts-msg { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity 0.15s; }
+  .msg:hover .acts-msg, .msg:focus-within .acts-msg, .msg:last-child .acts-msg { opacity: 1; }
+  .acts-msg button { border: 0; background: transparent; color: var(--faint); font-size: 12px; padding: 3px 7px; border-radius: 7px; }
+  .acts-msg button:hover { color: var(--ink); background: rgba(255,255,255,0.05); }
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+  .md p { margin: 0 0 10px; }
+  .md h3, .md h4, .md h5, .md h6, .md h7, .md h8 { margin: 16px 0 6px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.3; }
+  .md h3 { font-size: 18px; } .md h4 { font-size: 16px; } .md h5, .md h6 { font-size: 15px; }
+  .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+  .md li { margin: 3px 0; }
+  .md li.task-item { list-style: none; margin-left: -18px; }
+  .md a { color: var(--copper); }
+  .md code { font: 0.9em ui-monospace, Consolas, monospace; background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 5px; }
+  .md blockquote { margin: 0 0 10px; padding: 2px 0 2px 12px; border-left: 2px solid var(--line); color: var(--muted); }
+  .md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.08); margin: 14px 0; }
+  .md .code { margin: 0 0 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; background: rgba(0,0,0,0.38); }
+  .md .code-bar { display: flex; justify-content: space-between; align-items: center; padding: 5px 10px; font-size: 12px; color: var(--faint); background: rgba(255,255,255,0.03); }
+  .md .code-bar .copy { border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 2px 6px; }
+  .md .code-bar .copy:hover { color: var(--ink); }
+  .md .code pre { margin: 0; padding: 10px 12px; overflow-x: auto; }
+  .md .code code { background: none; padding: 0; font-size: 12.5px; line-height: 1.5; white-space: pre; }
+  .md .table { overflow-x: auto; margin: 0 0 10px; }
+  .md table { border-collapse: collapse; font-size: 13.5px; }
+  .md th, .md td { border: 1px solid rgba(255,255,255,0.1); padding: 5px 9px; text-align: left; vertical-align: top; }
+  .md th { background: rgba(255,255,255,0.04); font-weight: 600; }
+  .scrim { position: fixed; inset: 58px 0 0 0; background: rgba(0,0,0,0.5); z-index: 3; }
+  .app { height: calc(100% - 58px); }
+  #side { grid-column: 1; grid-row: 1; }
+  main { height: 100%; grid-column: 2; grid-row: 1; }
+  .app.mapped { grid-template-columns: 260px minmax(0, 1fr) minmax(300px, 440px); }
+  .map {
+    grid-column: 3; grid-row: 1; min-width: 0; min-height: 0;
+    display: flex; flex-direction: column;
+    border-left: 1px solid rgba(255,255,255,0.06);
+    background: rgba(8, 10, 14, 0.55);
+  }
+  .map-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 12px 12px 6px;
+  }
+  .map-bar .kicker { flex-basis: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .map-bar button {
+    border: 1px solid var(--line); background: transparent; border-radius: 999px;
+    padding: 2px 10px; font-size: 11px; letter-spacing: 0.04em; color: var(--copper);
+  }
+  .map-bar button[aria-pressed="false"] { color: var(--muted); border-color: rgba(255,255,255,0.1); }
+  #map-meta { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
+  .map canvas { flex: 1; width: 100%; min-height: 0; display: block; }
+  .map canvas[hidden] { display: none; }
+  #map-gl { cursor: grab; touch-action: none; outline: none; }
+  #map-gl:active { cursor: grabbing; }
+  #map-gl:focus-visible { box-shadow: inset 0 0 0 1px var(--line); }
+  .map-modes { display: inline-flex; gap: 4px; }
+  .map-modes button[aria-pressed="true"] { background: rgba(232, 168, 124, 0.16); }
+  .map-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .map-bar select {
+    background: rgba(8, 10, 14, 0.9); color: var(--ink); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 999px; padding: 2px 8px; font: inherit; font-size: 11px;
+  }
+  @media (max-width: 860px) {
+    .ctx { display: none; }
+    .menu { display: inline-block; }
+    .app { grid-template-columns: 1fr; }
+    aside#side {
+      position: fixed; top: 58px; bottom: 0; left: 0; width: min(300px, 86vw); z-index: 4;
+      background: #090b10; transform: translateX(-100%); transition: transform 0.2s ease;
+    }
+    aside#side.open { transform: none; }
+    .app.mapped { grid-template-columns: 1fr; grid-template-rows: minmax(210px, 36vh) minmax(0, 1fr); }
+    .app.mapped .map { grid-column: 1; grid-row: 1; border-left: 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .app.mapped main { grid-column: 1; grid-row: 2; height: auto; min-height: 0; }
+    .foot { margin-top: 0; }
+    .loading h1 { font-size: 28px; }
+    .loading, .thread { width: calc(100% - 32px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .status.busy i { animation: none; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <button id="menu" class="menu" type="button" aria-label="Chats" aria-expanded="false">☰</button>
+  <span class="logo">ENCRYPTID</span>
+  <span class="product">EdgeAI</span>
+  <div class="mode-pick">
+    <button id="mode" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="mode-menu" title="Model" disabled><b id="mode-name">Hodge-3.5</b></button>
+    <div id="mode-menu" class="mode-menu" role="menu" aria-label="Model" hidden></div>
+    <span id="ctx" class="ctx" hidden><i><b id="ctx-fill"></b></i><span id="ctx-text"></span></span>
+    <button id="instrument" type="button" aria-pressed="false" title="Plain decode. Turn on for live currents on every token." hidden>Instrumented</button>
+  </div>
+  <span id="status" class="status busy"><i></i><span id="status-text">Starting</span></span>
+</header>
+<div class="app">
+  <aside id="side">
+    <button id="newchat" class="new" type="button" disabled>New chat</button>
+    <input id="chat-search" class="chat-search" type="search" placeholder="Search chats" aria-label="Search chats">
+    <nav id="chats" class="chats" aria-label="Chats"></nav>
+    <p class="foot"><a href="terms.html">Terms</a> · ai.encryptid.systems</p>
+  </aside>
+  <div id="scrim" class="scrim" hidden></div>
+  <main>
+    <div class="stage">
+      <div class="loading" id="loading">
+        <div class="mark">ENCRYPTID</div>
+        <h1>Hodge-3.5</h1>
+        <p id="loading-copy">Bringing Hodge-3.5 onto this device.</p>
+        <div class="bar" id="bar" aria-hidden="true"><span id="bar-fill"></span></div>
+      </div>
+      <div class="thread" id="thread" hidden></div>
+      <button id="to-end" class="to-end" type="button" hidden aria-label="Scroll to the newest message">↓</button>
+    </div>
+    <form id="chat" class="composer">
+      <div class="tool-pick">
+        <button id="plus" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="tool-menu" aria-label="Choose tools for Hodge-3.5" title="Choose tools" disabled>+</button>
+        <div id="tool-menu" class="tool-menu" role="group" aria-label="Tools" hidden></div>
+      </div>
+      <div class="compose-main">
+        <div id="picked" class="picked" aria-label="Chosen tools" hidden></div>
+        <textarea id="msg" rows="1" placeholder="Message Hodge-3.5" autocomplete="off" disabled aria-label="Message"></textarea>
+      </div>
+      <button id="think" type="button" aria-pressed="false" disabled>Think</button>
+      <button id="stop" type="button" hidden>Stop</button>
+      <button id="send" type="submit" disabled>Send</button>
+    </form>
+  </main>
+  <aside id="map" class="map" hidden aria-label="Instrumented Tensor Transformer">
+    <div class="map-bar">
+      <span class="kicker" title="Instrumented Tensor Transformer: every layer's currents, live">Instrumented Tensor Transformer</span>
+      <span class="map-modes" role="group" aria-label="View">
+        <button type="button" data-map-mode="2d" aria-pressed="true">2D</button>
+        <button type="button" data-map-mode="volume" aria-pressed="false" title="One role's voxels: layer × output cell × input cell">Volume</button>
+        <button type="button" data-map-mode="graph" aria-pressed="false" title="Every layer's cells and strongest currents, layers along depth">Graph</button>
+      </span>
+      <select id="map-role" aria-label="Role" hidden>
+        <option value="0">q</option><option value="1">k</option><option value="2">v</option><option value="3">o</option>
+        <option value="4">gate</option><option value="5">up</option><option value="6">down</option>
+      </select>
+      <button id="map-follow" type="button" aria-pressed="true">Follow</button>
+      <span id="map-meta" aria-live="polite"></span>
+    </div>
+    <canvas id="map-canvas"></canvas>
+    <canvas id="map-gl" tabindex="0" hidden aria-label="3D map: drag to turn, wheel to zoom, double-click to reset, arrow keys pick the layer"></canvas>
+  </aside>
+</div>
+<script type="module">
+// Encryptid EdgeAI. Champ loads on open. The runtime speaks JSON:
+// stdout is one event per line, stdin is one command per line.
+// ?prompt= is the first message. ?model= is an operator override.
+import { PICKS, acceptsLearn, callAllowed, chatNote, clockText, declinesLearn, lookupQuery, pickedHint, playedTool, runTool, settleReply, slashCall, teachQuery, toolCallOf, toolStatus, toolStream, unknownReply, urlsIn, wantsLookup, wantsSavedNotes, wantsTeach } from "./ext.js";
+import { createMind, thoughtPrompt, explainPrompt } from "./mind.js";
+import { createVM, vmEndpoint } from "./vm.js";
+import { askConfirm, renderCard, resetAllow } from "./desk.js";
+import { createLog } from "./persist.js";
+import { createChats, inContextSummaryPrompt, rollPrompt, segmentPrompt, transcript } from "./chats.js";
+import { renderMarkdown } from "./markdown.js";
+import { messageActions, renderChatList } from "./chatui.js";
+import { createFlow } from "./flow.js";
+import { DEPTH, ENGINES, KIND, TIERS, accept, admit, decide, join, mixOf, presenceOf, route } from "./router.js";
+import { mountMap } from "./flowmap.js";
+// The MVCC log is replayed before anything commits, so txn numbers continue.
+const log = createLog();
+const mind = createMind({ onCommit: (rec) => log.onCommit(rec) });
+await log.load(mind);
+mind.restoreModules();
+const chats = createChats(mind);
+let storage = null;
+try { storage = localStorage; } catch { storage = null; }
+// Nothing in the page's URL chooses what it loads or where it sends anything: the model is one the
+// server's catalog lists (then the published copy, for champ), the arguments are fixed, and the exec
+// endpoint is the local EncryptidVM unless this browser saved another.
+const vm = createVM({ endpoint: vmEndpoint(storage), host: "" });
+// The addresses gather may read: ones the person wrote, and ones a search listed.
+const seenUrls = new Set();
+function noteUrls(text) {
+  for (const u of urlsIn(text)) seenUrls.add(u);
+}
+const agentCtx = { vm, confirm: (cmd) => askConfirm(thread, cmd), known: (href) => seenUrls.has(href) };
+async function runAgent(call) {
+  const ran = await runTool(call, undefined, agentCtx);
+  if (call && call.tool === "search" && ran) noteUrls(ran.output);
+  return ran;
+}
+const here = new URL(".", location.href);
+const KERNELS = ["bitlinear", "norm", "rope", "attention", "embed", "lmhead", "dot4_native", "dot4_soft"];
+// A model folder with volume.safetensors is instrumented: live cell currents, drawn as the Instrumented Tensor Transformer map.
+let flow = createFlow(false);
+let map = null;
+let flowToken = "";
+// Plain decode until this browser asks for live currents. The instrumented body still loads
+// when the folder has a volume, so the switch does not reload the weights.
+let instrument = false;
+try { instrument = localStorage.getItem("champ.instrument") === "1"; } catch { instrument = false; }
+const FLOW_KERNELS = ["flow", "flowscale", "cellsum"];
+function paintInstrument() {
+  const b = $("instrument");
+  b.hidden = !flow.on;
+  b.setAttribute("aria-pressed", instrument ? "true" : "false");
+  b.title = instrument
+    ? "Live currents on every token."
+    : "Plain decode. Turn on for live currents on every token.";
+  const show = flow.on && instrument;
+  document.querySelector(".app").classList.toggle("mapped", show);
+  $("map").hidden = !show;
+}
+function armFlow() {
+  if (!flow.on) {
+    flow = createFlow(true);
+    for (const k of FLOW_KERNELS) if (!KERNELS.includes(k)) KERNELS.push(k);
+    if (!map) map = mountMap($("map"));
+    flow.listen((fr) => map.frame(fr));
+  }
+  paintInstrument();
+}
+// A model without volume.safetensors runs uninstrumented: no flow files, no flow kernels, no map.
+function disarmFlow() {
+  flow = createFlow(false);
+  for (const k of FLOW_KERNELS) {
+    const i = KERNELS.indexOf(k);
+    if (i >= 0) KERNELS.splice(i, 1);
+  }
+  paintInstrument();
+}
+const SMALL = ["config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json"];
+const DEFAULT_SYSTEM = "You are Hodge-3.5, the auditable model, and you run on this device. Answer the person directly in plain words. Do not begin with your name. Do not introduce yourself. Do not say that you are an AI who cannot eat or feel, unless they asked what you are. A model card, a poem, an explanation, or any other writing is the answer in this chat. Do not use a tool unless the person's message asks for that tool. Do not say that a function ran. Do not invent a tool result.";
+// The system prompt is the person's to edit (the System prompt button): kept in this browser as
+// "champ.system", DEFAULT_SYSTEM otherwise. Hodge-3.5 takes it at the start of a chat.
+// A stored prompt that still names Champ is the old default, so it is dropped.
+const SYSTEM_MAX = 8000;
+function savedSystem() {
+  try {
+    const s = localStorage.getItem("champ.system");
+    // The old default named Champ or spelled out every tool, including canvas.
+    if (s && s.trim() && !/\bchamp\b/i.test(s) && !/"tool"\s*:\s*"canvas"/.test(s)) return s.slice(0, SYSTEM_MAX);
+    if (s) localStorage.removeItem("champ.system");
+  } catch { /* storage off */ }
+  return DEFAULT_SYSTEM;
+}
+let SYSTEM = savedSystem();
+
+const $ = (id) => document.getElementById(id);
+$("instrument").onclick = () => {
+  instrument = !instrument;
+  try { localStorage.setItem("champ.instrument", instrument ? "1" : "0"); } catch { /* this visit only */ }
+  paintInstrument();
+};
+const statusEl = $("status");
+const statusText = $("status-text");
+function status(t, kind) {
+  statusText.textContent = t;
+  statusEl.className = "status " + (kind || "");
+}
+
+const sab = new SharedArrayBuffer(1 << 16);
+const i32 = new Int32Array(sab);
+const u8 = new Uint8Array(sab);
+const stopSab = new SharedArrayBuffer(1);
+const stopByte = new Uint8Array(stopSab);
+function stdin(text) {
+  const b = new TextEncoder().encode(text);
+  const n = Atomics.load(i32, 1);
+  if (16 + n + b.length > u8.length) return false;
+  u8.set(b, 16 + n);
+  Atomics.store(i32, 1, n + b.length);
+  Atomics.store(i32, 0, 1);
+  Atomics.notify(i32, 0);
+  return true;
+}
+// The chat whose turns are in the model's context, the first message seq of
+// the stretch since the last reset, and the context fill from the last answer.
+let chatId = null;
+let primedId = null;
+let segFrom = 0;
+let ctxPos = 0;
+let ctxMax = 0;
+let pendingPrefix = "";
+let lastChatCmd = null;
+// presenceOf (router.js): idle MoE mass for this turn. 0 until the first message.
+let turnPresence = 0;
+// mixOf: the four engine gates. The guest draws a temperature from them. Not a tool choice.
+let turnMix = [1, 0, 0, 0];
+let compacting = false;
+let silentReset = null;
+let editFrom = null;
+// A chat command carries the gathered context once, on the first turn after a rebuild.
+function command(obj) {
+  if (obj.op === "chat") {
+    obj.flow = !!(flow.on && instrument);
+    // The idle engines' gate, as a presence penalty. The guest samples with it.
+    if (typeof obj.presence !== "number") obj.presence = turnPresence;
+    // The four gates, as a temperature mixture. Tools are chosen separately.
+    if (!obj.mix) obj.mix = turnMix;
+    lastChatCmd = obj;
+    if (pendingPrefix) {
+      obj = Object.assign({}, obj, { text: pendingPrefix + "\n\n" + obj.text });
+      pendingPrefix = "";
+    }
+  }
+  return stdin(JSON.stringify(obj) + "\n");
+}
+// Clears the model's context without touching the page.
+function resetModel() {
+  return new Promise((resolve) => {
+    silentReset = resolve;
+    if (!command({ op: "reset" })) {
+      silentReset = null;
+      resolve();
+    }
+  });
+}
+
+// The server lists its models in /models/catalog.json, {"models":[{"id":"champ","name":"BitNet b1.58 2B4T"}, ...]},
+// and each one is the folder /models/<id>/. The page loads only an id that list names; no URL parameter
+// picks a model, and the choice is this browser's own (localStorage "champ.model"). With no list there is
+// one model, /models/champ/.
+const MODEL_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+let modelId = "hodge-1";
+let modelCount = 0;
+async function catalog() {
+  try {
+    const r = await fetch(new URL("/models/catalog.json", location.href), { cache: "no-store" });
+    const type = r.headers.get("Content-Type") || "";
+    if (!r.ok || type.includes("text/html")) return [];
+    const j = await r.json();
+    const seen = new Set();
+    const out = [];
+    for (const m of Array.isArray(j && j.models) ? j.models : []) {
+      if (!m || typeof m.id !== "string" || !MODEL_ID.test(m.id) || seen.has(m.id)) continue;
+      seen.add(m.id);
+      const name = typeof m.name === "string" && m.name.trim() ? m.name.trim().slice(0, 80) : m.id;
+      // tier: the engine slot Auto routes to (router.js): lite, balanced, thinking or pro.
+      const tier = typeof m.tier === "string" && TIERS.has(m.tier) ? m.tier : "";
+      out.push({ id: m.id, name, tier });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+// The header's model menu: Auto (the router) or one model. The choice is this browser's own
+// (localStorage "champ.mode": "auto" or a catalog id).
+let models = [];
+let mode = "auto";
+async function pickModel() {
+  const list = await catalog();
+  modelCount = list.length;
+  models = list;
+  if (!list.length) {
+    models = [{ id: "hodge-1", name: "Hodge-3.5", tier: "lite" }];
+    mode = "hodge-1";
+    modelId = "hodge-1";
+    renderModes();
+    return new URL("/models/hodge-1/", location.href).href;
+  }
+  let want = "";
+  try { want = localStorage.getItem("champ.mode") || localStorage.getItem("champ.model") || ""; } catch { want = ""; }
+  const tiered = list.some((m) => m.tier);
+  mode = want === "auto" || (!want && tiered) ? "auto" : (list.find((m) => m.id === want) || list[0]).id;
+  if (mode === "auto" && !tiered) mode = list[0].id;
+  // Auto starts on the Lite engine, the quickest to load, when the server has one.
+  const first = mode === "auto" ? (list.find((m) => m.tier === "lite") || list.find((m) => m.tier)) : list.find((m) => m.id === mode);
+  modelId = first.id;
+  renderModes();
+  return new URL("/models/" + first.id + "/", location.href).href;
+}
+function modelOf(id) {
+  return models.find((m) => m.id === id) || null;
+}
+function engineOf(m) {
+  return (m && ENGINES.find((e) => e.tier === m.tier)) || null;
+}
+function shownName() {
+  const m = modelOf(modelId);
+  return m && m.name ? m.name : "Hodge-3.5";
+}
+function modeLabel() {
+  return shownName();
+}
+function renderModes() {
+  $("mode-name").textContent = modeLabel();
+  const m = modelOf(modelId);
+  $("mode").title = m ? "Loaded: " + m.name : "Model";
+  const menu = $("mode-menu");
+  menu.textContent = "";
+  const item = (value, title, sub, note, disabled) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "menuitemradio");
+    b.setAttribute("aria-checked", value && mode === value ? "true" : "false");
+    b.disabled = !!disabled;
+    const bt = document.createElement("b");
+    bt.textContent = title;
+    b.append(bt);
+    if (sub) {
+      const sp = document.createElement("span");
+      sp.textContent = sub;
+      b.append(sp);
+    }
+    if (note) {
+      const i = document.createElement("i");
+      i.textContent = note;
+      b.append(i);
+    }
+    b.onclick = () => chooseMode(value);
+    return b;
+  };
+  const filled = ENGINES.map((e) => models.find((y) => y.tier === e.tier)).filter(Boolean);
+  if (filled.length > 1) {
+    menu.append(item("auto", "Auto", "Router", "Each message goes to the engine the gate picks, with the tools it needs. Switches carry the continuity chain."));
+    const axes = document.createElement("div");
+    axes.className = "mode-axes";
+    axes.innerHTML = "<span>Small</span><span>Large</span>";
+    menu.append(axes);
+  }
+  if (filled.length) {
+    const grid = document.createElement("div");
+    grid.className = "mode-grid";
+    for (const x of filled) grid.append(item(x.id, x.name, "", x.id === modelId ? "Loaded" : ""));
+    menu.append(grid);
+  }
+  const rest = models.filter((x) => !x.tier);
+  if (rest.length) {
+    if (filled.length) menu.append(document.createElement("hr"));
+    for (const x of rest) menu.append(item(x.id, x.name, "", x.id === modelId ? "Loaded" : ""));
+  }
+  $("mode").disabled = generating || compacting || !!swapping || !ready || models.length < 2;
+}
+function closeModes() {
+  $("mode-menu").hidden = true;
+  $("mode").setAttribute("aria-expanded", "false");
+}
+$("mode").onclick = () => {
+  const open = $("mode-menu").hidden;
+  if (open) renderModes();
+  $("mode-menu").hidden = !open;
+  $("mode").setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) {
+    const c = $("mode-menu").querySelector('[aria-checked="true"]') || $("mode-menu").querySelector("button:not(:disabled)");
+    if (c) c.focus();
+  }
+};
+document.addEventListener("click", (e) => {
+  if (!$("mode-menu").hidden && !e.target.closest(".mode-pick")) closeModes();
+});
+$("mode-menu").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeModes(); $("mode").focus(); }
+});
+async function chooseMode(value) {
+  closeModes();
+  if (!value || value === mode || generating || compacting || swapping) return;
+  mode = value;
+  try { localStorage.setItem("champ.mode", mode); } catch { /* this visit only */ }
+  renderModes();
+  const m = mode === "auto" ? null : modelOf(mode);
+  if (m && m.id !== modelId) {
+    setBusy(true);
+    await handoff(m, "chosen");
+    setBusy(false);
+  }
+}
+
+// ---- the context window and the continuity chain
+
+function ctxFull() {
+  return !!ctxMax && ctxPos > 0.7 * ctxMax;
+}
+function updateCtx() {
+  const box = $("ctx");
+  if (!ctxMax) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const f = Math.min(1, ctxPos / ctxMax);
+  $("ctx-fill").style.width = Math.round(f * 100) + "%";
+  $("ctx-text").textContent = ctxPos.toLocaleString() + " / " + ctxMax.toLocaleString();
+  box.classList.toggle("warn", f > 0.7);
+  box.title = "Context window: " + ctxPos.toLocaleString() + " of " + ctxMax.toLocaleString() +
+    " tokens. At 70% " + shownName() + " adds a summary to the continuity chain and starts again from it.";
+}
+function lastSeq(id) {
+  const msgs = chats.messages(id);
+  return msgs.length ? msgs[msgs.length - 1].seq : 0;
+}
+// One hand-off in the thread: which model took the chat, and that it took the chain with it.
+function linkRow(link) {
+  const p = document.createElement("div");
+  p.className = "handoff";
+  p.textContent = (link.from ? link.from + " → " : "→ ") + link.to + " · continuity chain carried";
+  if (link.reason) p.title = link.reason;
+  thread.append(p);
+}
+
+// Loads another model into a new guest while the page stays: the thread, the chat and the chain are
+// untouched, and the next turn primes the new model from the chain (prime -> chats.gather).
+let swapping = null;
+async function swapModel(m) {
+  const prevId = modelId;
+  const prevFlow = flow;
+  modelId = m.id;
+  disarmFlow();
+  status("Loading " + m.name, "busy");
+  let files;
+  try {
+    files = await fromUrl(new URL("/models/" + m.id + "/", location.href).href);
+    Object.assign(files, await kernels());
+  } catch (e) {
+    // Nothing started: the loaded guest keeps running.
+    modelId = prevId;
+    flow = prevFlow;
+    if (flow.on) {
+      for (const k of FLOW_KERNELS) if (!KERNELS.includes(k)) KERNELS.push(k);
+    }
+    paintInstrument();
+    throw e;
+  }
+  await new Promise((resolve, reject) => {
+    swapping = { resolve, reject, name: m.name };
+    start(files);
+  });
+  primedId = null;
+  ctxPos = 0;
+  renderModes();
+  updateCtx();
+}
+// A switch is the die's reload beat: route() says reset, so the engine's context is cleared and the
+// continuity chain stays. The fence before it: the stretch the old engine holds becomes a segment of
+// the chain, so the new engine starts from a summary as well as the recent turns.
+async function handoff(m, reason) {
+  const from = modelOf(modelId);
+  if (route(ctxFull(), KIND.reload) !== "reset") return false;
+  if (chatId && primedId === chatId && ready && chats.messages(chatId).some((x) => x.seq >= segFrom && x.role === "assistant")) {
+    status("Saving context", "busy");
+    const seg = await hiddenChat(inContextSummaryPrompt(), 160);
+    if (seg) {
+      chats.addSegment(chatId, segFrom, lastSeq(chatId), seg);
+      await mergeRoll(chatId, seg);
+    }
+  }
+  try {
+    await swapModel(m);
+  } catch (e) {
+    notice(shownName() + " could not load " + m.name + ": " + (e && e.message ? e.message : String(e)));
+    if (!ready && from && from.id !== m.id) {
+      try { await swapModel(from); } catch { return false; }
+    }
+    return false;
+  }
+  if (chatId) {
+    const link = { from: from ? from.name : "", to: m.name, tier: m.tier || "", reason: reason || "" };
+    chats.add(chatId, { role: "link", text: "", link });
+    linkRow(link);
+    toEnd();
+  }
+  return true;
+}
+const PACKED_URL = "https://huggingface.co/spaces/EncryptidSystems/README/resolve/main/model.bnz?download=true";
+const HF_TREE = "https://huggingface.co/api/spaces/EncryptidSystems/README/tree/main";
+
+async function kernels() {
+  const files = {};
+  for (const k of KERNELS) {
+    const r = await fetch(new URL("../kernels/" + k + ".wgsl", here));
+    if (!r.ok) throw new Error(shownName() + " could not start.");
+    files["kernels/" + k + ".wgsl"] = new Uint8Array(await r.arrayBuffer());
+  }
+  return files;
+}
+async function weightProbe(url) {
+  try {
+    const res = await fetch(url, { headers: { Range: "bytes=0-15" } });
+    if (res.status !== 206 && res.status !== 200) return null;
+    const type = res.headers.get("Content-Type") || "";
+    if (type.includes("text/html")) return null;
+    const buf = new Uint8Array(await res.arrayBuffer());
+    // BNZ2 decodes on the CPU (bnz.js); BNZ4, hodgemix's output, on the GPU (bnz4load.js).
+    const magic = buf.length >= 4 ? String.fromCharCode(buf[0], buf[1], buf[2], buf[3]) : "";
+    const codec = magic === "BNZ2" ? "bnz" : magic === "BNZ4" ? "bnz4" : "";
+    if (!codec) return null;
+    const cr = res.headers.get("Content-Range") || "";
+    const total = Number((/\/(\d+)\s*$/.exec(cr) || [])[1]);
+    const linked = Number(res.headers.get("X-Linked-Size"));
+    const size = total || linked || (buf.length === Number(res.headers.get("Content-Length")) ? buf.length : 0);
+    if (!size || size < 32) return null;
+    return { url: res.url || url, size, codec };
+  } catch {
+    return null;
+  }
+}
+async function hfWeight() {
+  try {
+    const r = await fetch(HF_TREE);
+    if (!r.ok) return null;
+    const rows = await r.json();
+    const file = Array.isArray(rows) ? rows.find((row) => row && row.path === "model.bnz") : null;
+    const etag = file && file.lfs && file.lfs.oid;
+    const size = file && file.lfs && Number(file.lfs.size);
+    if (!etag || !size) return null;
+    return { etag, size };
+  } catch {
+    return null;
+  }
+}
+async function fromUrl(base) {
+  if (!base.endsWith("/")) base += "/";
+  const files = {};
+  const vol = await fetch(base + "volume.safetensors");
+  if (!vol.ok && vol.status !== 404) throw new Error(shownName() + " could not start.");
+  if (vol.ok) {
+    const bytes = new Uint8Array(await vol.arrayBuffer());
+    armFlow();
+    map.structure(bytes);
+    files["model/volume.safetensors"] = bytes;
+  }
+  for (const f of SMALL) {
+    const r = await fetch(base + f);
+    if (!r.ok) {
+      if (f === "config.json" || f === "tokenizer.json") throw new Error(shownName() + " could not start.");
+      continue;
+    }
+    files["model/" + f] = new Uint8Array(await r.arrayBuffer());
+  }
+  // The folder's own weights first (packed, then plain), then the published copy.
+  const probed = await weightProbe(new URL(base + "model.bnz", location.href).href);
+  if (probed) {
+    files["model/model.safetensors"] = { codec: probed.codec, url: probed.url, size: probed.size, room: modelId, etag: "" };
+    return files;
+  }
+  const head = await fetch(base + "model.safetensors", { method: "HEAD" });
+  const size = Number(head.headers.get("Content-Length"));
+  if (head.ok && size) {
+    files["model/model.safetensors"] = { url: base + "model.safetensors", size };
+    return files;
+  }
+  // The published copy is Champ's weights: another model never falls back to them.
+  if (modelId !== "champ") throw new Error("This model's weights are not on the server.");
+  const id = await hfWeight();
+  const published = await weightProbe(PACKED_URL);
+  if (!published) throw new Error(shownName() + " could not start.");
+  const etag = id && id.etag && id.size === published.size ? id.etag : "";
+  files["model/model.safetensors"] = { codec: published.codec, url: published.url, size: published.size, room: "", etag };
+  return files;
+}
+const thread = $("thread");
+const loading = $("loading");
+let assistant = null;
+let generating = false;
+let ready = false;
+let lineBuf = "";
+let sawDownload = false;
+let shownMax = 0;
+
+function setProgress(p, phase) {
+  let shown = p;
+  if (phase === "download") {
+    sawDownload = true;
+    shown = p * 0.72;
+  } else if (sawDownload) {
+    shown = 0.72 + p * 0.28;
+  }
+  if (shown < shownMax) shown = shownMax;
+  else shownMax = shown;
+  const n = Math.max(0, Math.min(100, Math.round(shown * 100)));
+  $("bar-fill").style.width = n + "%";
+  if (swapping) {
+    status("Loading " + swapping.name + " " + n + "%", "busy");
+    return;
+  }
+  $("loading-copy").textContent = "Preparing " + shownName();
+  status("Preparing", "busy");
+}
+function showLoading(copy) {
+  loading.hidden = false;
+  thread.hidden = true;
+  $("loading-copy").textContent = copy;
+}
+function showThread() {
+  loading.hidden = true;
+  thread.hidden = false;
+}
+function bubble(role, text) {
+  const row = document.createElement("div");
+  row.className = "msg " + role;
+  const box = document.createElement("div");
+  box.className = "bubble";
+  const who = document.createElement("span");
+  who.className = "who";
+  if (role === "user") who.textContent = "You";
+  else whoLabel(who, undefined);
+  const body = document.createElement("div");
+  if (role === "assistant") body.className = "live";
+  body.textContent = text || "";
+  box.append(who, body);
+  row.append(box);
+  thread.append(row);
+  thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
+  return body;
+}
+// The tool beat on the page: a spinning mark and a short status, never the JSON.
+// Rebuilding the mark on every token would restart the spin, so an existing
+// loader with the same label and lead stays put.
+function showLoad(body, label, lead, beat) {
+  if (!body) return;
+  const words = label || "Working…";
+  const have = body.querySelector(":scope > .load");
+  const leadEl = body.querySelector(":scope > .lead");
+  const sameLead = lead ? !!(leadEl && leadEl.textContent === lead) : !leadEl;
+  if (have && sameLead && have.lastElementChild && have.lastElementChild.textContent === words) {
+    if (beat) have.dataset.beat = beat;
+    return;
+  }
+  body.replaceChildren();
+  if (lead) {
+    const prose = document.createElement("div");
+    prose.className = "lead";
+    prose.textContent = lead;
+    body.append(prose);
+  }
+  const row = document.createElement("span");
+  row.className = "load";
+  row.setAttribute("role", "status");
+  if (beat) row.dataset.beat = beat;
+  const mark = document.createElement("i");
+  mark.setAttribute("aria-hidden", "true");
+  const name = document.createElement("span");
+  name.textContent = words;
+  row.append(mark, name);
+  body.append(row);
+}
+// Words to keep. A loader is not an answer, so its label is left out.
+function answerText(body) {
+  if (!body) return "";
+  if (body.querySelector(":scope > .load")) {
+    const lead = body.querySelector(":scope > .lead");
+    return lead ? lead.textContent.trim() : "";
+  }
+  return body.textContent.trim();
+}
+function notice(text) {
+  const p = document.createElement("div");
+  p.className = "notice";
+  p.textContent = text;
+  thread.append(p);
+  showThread();
+}
+function welcome() {
+  thread.textContent = "";
+  const row = document.createElement("div");
+  row.className = "msg assistant";
+  row.innerHTML = '<div class="bubble"><span class="who"></span><div>On this device and ready.</div></div>';
+  row.querySelector(".who").textContent = shownName();
+  const chips = document.createElement("div");
+  chips.className = "chips";
+  for (const t of [
+    "What can you help me with?",
+    "Summarize a plan in a few sentences.",
+    "Draft a short note.",
+  ]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = t;
+    b.onclick = () => ask(t);
+    chips.append(b);
+  }
+  row.append(chips);
+  thread.append(row);
+}
+function setBusy(on) {
+  generating = on;
+  $("msg").disabled = !ready || on;
+  $("send").disabled = !ready || on;
+  $("think").disabled = !ready || on;
+  $("plus").disabled = !ready || on;
+  if (on) closeTools();
+  $("stop").hidden = !on;
+  $("newchat").disabled = !ready || on;
+  $("mode").disabled = on || !!swapping || !ready || models.length < 2;
+  if (on) closeModes();
+  if (!on && ready && !swapping && beats.length) {
+    const [bt, bo] = beats.shift();
+    setTimeout(() => ask(bt, bo), 0);
+  }
+  if (!on && ready) $("msg").focus();
+}
+function onReady() {
+  ready = true;
+  if (swapping) {
+    const s = swapping;
+    swapping = null;
+    status("Ready", "ready");
+    s.resolve();
+    return;
+  }
+  const back = hashChat();
+  if (back) {
+    chatId = back;
+    showChat(back);
+    refreshList();
+  } else welcome();
+  showThread();
+  status("Ready", "ready");
+  setBusy(false);
+}
+let held = "";
+let holding = true;
+let rawAnswer = "";
+let toolRounds = 0;
+let replaceNext = false;
+// The bubble is a tool loader, so arriving tokens are not written out as JSON.
+let hidingTool = false;
+let afterPlain = null;
+let lastDone = null;
+let thinkOn = false;
+// The model on this turn (router.js decide), saved with the answer; null before the first routed turn.
+let turnVia = null;
+// Chat beats that arrived while busy (router.js accept: stall), at most DEPTH.
+const beats = [];
+// via undefined: this turn's model; null: an answer saved without one.
+function whoLabel(el, via) {
+  const v = via === undefined ? turnVia : via;
+  el.textContent = shownName();
+  if (v && v.reason) el.title = shownName() + " · " + v.reason;
+}
+let lastAsk = "";
+let pendingLearn = "";
+
+
+function asksClock(text) {
+  return /\b(date|time|today|tonight|tomorrow|yesterday|weekday|what day|day is it)\b/i.test(text);
+}
+function finishTurn(ev) {
+  toolRounds = 0;
+  replaceNext = false;
+  hidingTool = false;
+  rawAnswer = "";
+  const text = assistant ? answerText(assistant) : "";
+  if (assistant && !text && assistant.querySelector(".load")) {
+    const row = assistant.closest(".msg");
+    if (row) row.remove();
+    assistant = null;
+  }
+  if (assistant && ev) {
+    const sec = ev.decode_ms > 0 ? (ev.tokens * 1000 / ev.decode_ms) : 0;
+    const rate = sec ? (Math.round(sec * 10) / 10).toFixed(1) + " tok/s" : "";
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = [ev.tokens ? ev.tokens + " tokens" : "", rate, ev.reason || ""].filter(Boolean).join(" · ");
+    assistant.parentElement.append(meta);
+  }
+  if (assistant && chatId && assistant.isConnected) {
+    if (text) {
+      // jev_join: emit the answer with its model once the result, the chain carried into this engine and
+      // a place on the page are all there.
+      const emit = join(true, primedId === chatId, assistant.isConnected) === "emit";
+      chats.add(chatId, emit && turnVia ? { role: "assistant", text, via: turnVia } : { role: "assistant", text });
+      showAnswer(assistant, text);
+      refreshList();
+    }
+  }
+  assistant = null;
+  stopByte[0] = 0;
+  status("Ready", "ready");
+  setBusy(false);
+  if (ctxMax && ctxPos > 0.7 * ctxMax) compact().catch(() => { compacting = false; setBusy(false); });
+}
+// A finished answer: markdown in place of the streamed text, then its actions.
+function showAnswer(body, text) {
+  body.classList.remove("live");
+  body.replaceChildren(renderMarkdown(text));
+  const row = body.closest(".msg");
+  for (const b of thread.querySelectorAll(".acts-msg .regen")) b.remove();
+  if (row) {
+    const bar = messageActions(row, { text, regen: () => regenerate() });
+    const last = bar.lastChild;
+    if (last) last.classList.add("regen");
+  }
+}
+function userRow(text, seq) {
+  const body = bubble("user", text);
+  const row = body.closest(".msg");
+  messageActions(row, { text, edit: () => startEdit(seq, text) });
+  return body;
+}
+function addCard(card, before) {
+  renderCard(thread, card, before);
+  if (chatId) chats.add(chatId, { role: "card", text: card.output || "", card });
+}
+
+// ---- chats: list, open, edit, regenerate
+
+function setHash(id) {
+  const want = id ? "#c=" + id : "";
+  if (location.hash !== want) history.replaceState(null, "", location.pathname + location.search + want);
+}
+function hashChat() {
+  const m = /^#c=([\w-]+)$/.exec(location.hash);
+  return m && chats.meta(m[1]) ? m[1] : null;
+}
+function refreshList() {
+  renderChatList($("chats"), chats.list(), chatId, {
+    open: openChat,
+    rename: (id, title) => { chats.rename(id, title); refreshList(); },
+    remove: (id) => {
+      chats.remove(id);
+      if (id === chatId) newChat();
+      else refreshList();
+    },
+    refresh: () => refreshList(),
+  }, $("chat-search").value);
+}
+function showChat(id) {
+  thread.textContent = "";
+  let lastAnswer = null;
+  for (const m of chats.messages(id)) {
+    if (m.role === "user") userRow(m.text, m.seq);
+    else if (m.role === "card" && m.card) renderCard(thread, m.card);
+    else if (m.role === "link" && m.link) linkRow(m.link);
+    else if (m.role === "assistant") {
+      const body = bubble("assistant", "");
+      whoLabel(body.closest(".msg").querySelector(".who"), m.via || null);
+      body.classList.remove("live");
+      body.replaceChildren(renderMarkdown(m.text));
+      lastAnswer = { body, text: m.text };
+      messageActions(body.closest(".msg"), { text: m.text });
+    }
+  }
+  if (lastAnswer) showAnswer(lastAnswer.body, lastAnswer.text);
+  showThread();
+  toEnd();
+}
+function openChat(id) {
+  if (generating || compacting) return;
+  closeDrawer();
+  if (id === chatId) return;
+  chatId = id;
+  editFrom = null;
+  pendingLearn = "";
+  setHash(id);
+  showChat(id);
+  refreshList();
+}
+function newChat() {
+  if (generating || compacting) return;
+  closeDrawer();
+  chatId = null;
+  editFrom = null;
+  pendingLearn = "";
+  resetAllow();
+  vm.close();
+  setHash(null);
+  welcome();
+  showThread();
+  refreshList();
+}
+function startEdit(seq, text) {
+  if (generating || compacting) return;
+  editFrom = seq;
+  $("msg").value = text;
+  $("msg").dispatchEvent(new Event("input"));
+  $("msg").focus();
+  $("msg").placeholder = "Edit your message";
+}
+function regenerate() {
+  if (generating || compacting || !chatId) return;
+  const msgs = chats.messages(chatId);
+  const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+  if (!lastUser) return;
+  ask(lastUser.text, { regen: lastUser.seq });
+}
+
+// ---- context: rebuild from the MVCC summaries, and make room when it fills
+
+// Before a model turn: if the model holds another chat (or none), rebuild this
+// one from its summaries and recent turns.
+async function prime(text, userSeq) {
+  if (primedId === chatId) return;
+  await resetModel();
+  pendingPrefix = chats.gather(chatId, text, userSeq);
+  primedId = chatId;
+  segFrom = userSeq;
+}
+// Runs one model turn whose words go nowhere on the page.
+async function hiddenChat(prompt, max) {
+  const hold = assistant;
+  assistant = document.createElement("div");
+  const got = await plainChat(prompt, max);
+  assistant = hold;
+  return (got || "").replace(/\s+/g, " ").trim();
+}
+async function mergeRoll(id, seg) {
+  const prev = chats.roll(id);
+  if (!prev) {
+    chats.setRoll(id, seg);
+    return;
+  }
+  await resetModel();
+  const merged = await hiddenChat(rollPrompt(prev, seg), 200);
+  chats.setRoll(id, merged || prev + " " + seg);
+}
+// The context is 70% full: Champ summarizes the stretch it holds, that becomes
+// a segment and joins the rolling summary, and the next turn starts from those.
+async function compact() {
+  if (compacting || !chatId) return;
+  compacting = true;
+  setBusy(true);
+  status("Saving context", "busy");
+  const id = chatId;
+  const msgs = chats.messages(id);
+  const last = msgs.length ? msgs[msgs.length - 1].seq : 0;
+  let seg = await hiddenChat(inContextSummaryPrompt(), 160);
+  if (seg) chats.addSegment(id, segFrom, last, seg);
+  else seg = await summarizeFromStore(id);
+  if (seg) await mergeRoll(id, seg);
+  primedId = null;
+  ctxPos = 0;
+  updateCtx();
+  compacting = false;
+  status("Ready", "ready");
+  setBusy(false);
+}
+// No room left in the model: summarize from the stored turns instead.
+async function summarizeFromStore(id) {
+  const from = chats.covered(id) + 1;
+  const part = chats.messages(id).filter((m) => m.seq >= from && m.role !== "card");
+  if (!part.length) return "";
+  await resetModel();
+  const seg = await hiddenChat(segmentPrompt(transcript(part, 2400)), 160);
+  if (seg) chats.addSegment(id, part[0].seq, part[part.length - 1].seq, seg);
+  return seg;
+}
+// The guest refused a turn because the context is full: make room, rebuild, resend.
+async function recoverFull(cmd) {
+  compacting = true;
+  status("Making room", "busy");
+  const id = chatId;
+  const msgs = chats.messages(id);
+  const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+  const seg = await summarizeFromStore(id);
+  if (seg) await mergeRoll(id, seg);
+  await resetModel();
+  pendingPrefix = chats.gather(id, lastUser ? lastUser.text : "", lastUser ? lastUser.seq : null);
+  primedId = id;
+  segFrom = lastUser ? lastUser.seq : 0;
+  compacting = false;
+  status("Thinking", "busy");
+  if (!command(cmd)) {
+    notice("That message is too long for one turn.");
+    finishTurn(null);
+  }
+}
+// The model sometimes opens with its name. Hold the first tokens and drop
+// that label. "Hodge-3.5 is …" stays, because that is an answer.
+function takeLead(text, force) {
+  if (!holding) return text;
+  held += text;
+  const name = /^\s*(?:hodge-3\.5|champ)\s*[,:]\s*/i.exec(held);
+  if (name && (force || held.length > name[0].length)) {
+    holding = false;
+    const rest = held.slice(name[0].length);
+    held = "";
+    return rest;
+  }
+  const unfinished = /^\s*(?:hodge(?:-3(?:\.5)?)?|champ)\s*[,:]?\s*$/i.test(held);
+  if (!unfinished && (force || held.length > 16 || /^\s*(?!hodge-3\.5\b|champ\b)\S/i.test(held))) {
+    holding = false;
+    const rest = held;
+    held = "";
+    return rest;
+  }
+  return "";
+}
+// A tool call is a tool beat (router.js KIND.tool). accept() takes it.
+// route() is "load" while the context has room — the call streams as the
+// loader, then the result joins the engine — and "pass" when the context is
+// full, where the result stays on the card. The JSON is not written out.
+function paintTool(buf) {
+  const view = toolStream(buf);
+  if (view.kind === "text") return false;
+  // Taken even while the engine is busy. "load" is the spinner and, once the
+  // call finishes, the result joining the engine. "pass" is the same spinner
+  // with the result left on the card because the context is full.
+  const taken = accept(KIND.tool, { busy: generating, loading: !ready || !!swapping, queue: beats.length });
+  const beat = route(ctxFull(), KIND.tool);
+  if (taken !== "take") return true;
+  hidingTool = true;
+  // A draft the person wants to read is not the notes tool. The spinner stays
+  // until the words replace it. A picked Notes tool still says Opening notes.
+  let label = view.tool ? toolStatus(view.tool) : "Working…";
+  if (view.tool === "notes" && !picks.has("notes") && !wantsSavedNotes(lastAsk)) label = "Writing…";
+  showLoad(assistant, label, view.lead, beat);
+  status(label, "busy");
+  return true;
+}
+function onToken(ev) {
+  flowToken = ev.text || "";
+  if (map) map.token(flowToken);
+  rawAnswer += ev.text || "";
+  if (!assistant) {
+    assistant = bubble("assistant", "");
+    held = "";
+    holding = true;
+  }
+  if (replaceNext) {
+    assistant.textContent = "";
+    held = "";
+    holding = true;
+    replaceNext = false;
+    hidingTool = false;
+    status("Thinking", "busy");
+  }
+  const follow = nearEnd();
+  if (!afterPlain && paintTool(rawAnswer)) {
+    if (follow) toEnd();
+    return;
+  }
+  if (hidingTool) {
+    assistant.textContent = "";
+    held = "";
+    holding = true;
+    hidingTool = false;
+    const replay = takeLead(rawAnswer, false);
+    if (replay) assistant.textContent = replay;
+    if (follow) toEnd();
+    return;
+  }
+  const text = takeLead(ev.text || "", false);
+  if (text) assistant.textContent += text;
+  if (follow) toEnd();
+}
+function nearEnd() {
+  const s = thread.parentElement;
+  return s.scrollHeight - s.scrollTop - s.clientHeight < 80;
+}
+function toEnd() {
+  const s = thread.parentElement;
+  s.scrollTop = s.scrollHeight;
+}
+function onDone(ev) {
+  if (ev && ev.ctx) {
+    ctxPos = Number(ev.pos) || 0;
+    ctxMax = Number(ev.ctx) || 0;
+    updateCtx();
+  }
+  if (assistant && holding && !hidingTool) {
+    const text = takeLead("", true);
+    if (text) assistant.textContent += text;
+  }
+  const answered = rawAnswer;
+  rawAnswer = "";
+  if (afterPlain) {
+    const cb = afterPlain;
+    afterPlain = null;
+    lastDone = ev;
+    const visible = assistant ? answerText(assistant) || assistant.textContent.trim() : answered.trim();
+    cb(visible, ev);
+    return;
+  }
+  if (stopByte[0] !== 0) {
+    finishTurn(ev);
+    return;
+  }
+  // "Draft a short note" is a note for the chat. The model often answers with
+  // a notes call. A second turn cannot drop the tool prompt, and deleting the
+  // loader left the thread empty. Show the words the call already holds.
+  // A picked Notes tool, or a real save/list, still runs.
+  if (!picks.has("notes") && !wantsSavedNotes(lastAsk)) {
+    const words = chatNote(answered, lastAsk);
+    if (words) {
+      if (!assistant) assistant = bubble("assistant", "");
+      hidingTool = false;
+      assistant.textContent = words;
+      finishTurn(ev);
+      return;
+    }
+  }
+  // A writing request is not a canvas call. An unsolicited tool, or a narration
+  // of one ("the response was: {"id":null}"), is answered again in plain words.
+  const invented = toolCallOf(answered);
+  const unwanted = invented && !callAllowed(invented, lastAsk, [...picks]);
+  if (playedTool(answered) || unwanted) {
+    const lead = (toolStream(answered).lead || "").trim();
+    if (unwanted && lead && !playedTool(lead)) {
+      hidingTool = false;
+      if (assistant) assistant.textContent = lead;
+      finishTurn(ev);
+      return;
+    }
+    if (toolRounds > 0) {
+      hidingTool = false;
+      if (assistant) assistant.textContent = "I can write that in this chat.";
+      finishTurn(ev);
+      return;
+    }
+    toolRounds = 1;
+    hidingTool = true;
+    if (assistant) showLoad(assistant, "Thinking…", "", "stage");
+    held = "";
+    holding = true;
+    replaceNext = true;
+    status("Thinking", "busy");
+    const wire = "The person asked: " + lastAsk + "\nWrite the answer in this chat, in plain words. Do not use a tool. Do not describe a tool.";
+    if (!command({ op: "chat", text: wire, system: SYSTEM })) {
+      if (assistant) assistant.textContent = "I can write that in this chat.";
+      finishTurn(null);
+    }
+    return;
+  }
+  settleReply(answered, toolRounds, runAgent).then((step) => {
+    if (step.card) addCard(step.card, assistant ? assistant.closest(".msg") : null);
+    if (stopByte[0] !== 0) {
+      finishTurn(null);
+      return;
+    }
+    if (step.action === "finish") {
+      const visible = assistant ? answerText(assistant) : "";
+      offerLearn(lastAsk, visible);
+      finishTurn(ev);
+      return;
+    }
+    if (step.action === "show") {
+      hidingTool = false;
+      if (assistant) assistant.textContent = step.text || "";
+      finishTurn(ev);
+      return;
+    }
+    // In Auto a tool's result is a weight beat: route() loads it into the engine's context, or passes it
+    // to the page when the context is full; and it is admitted only when it moves the way the question
+    // does (router.js admit, hodgemix --update's rule). A passed result is the answer as it stands.
+    if (mode === "auto" && lastAsk) {
+      const cos = mind.cosine(mind.embed(lastAsk), mind.embed(step.fallback || ""));
+      if (route(ctxFull(), KIND.tool) === "pass" || !admit(cos)) {
+        if (step.card && assistant) {
+          assistant.closest(".msg").remove();
+          assistant = null;
+        } else if (assistant) assistant.textContent = step.fallback || "";
+        finishTurn(ev);
+        return;
+      }
+    }
+    toolRounds = step.rounds;
+    hidingTool = true;
+    if (assistant) showLoad(assistant, step.status, "", route(ctxFull(), KIND.tool));
+    status(step.status, "busy");
+    held = "";
+    holding = true;
+    replaceNext = true;
+    if (!command({ op: "chat", text: step.wire, system: SYSTEM })) {
+      if (assistant) assistant.textContent = step.fallback || "The lookup failed.";
+      finishTurn(null);
+    }
+  }).catch(() => {
+    hidingTool = false;
+    if (assistant) assistant.textContent = "The lookup failed.";
+    finishTurn(null);
+  });
+}
+function onEvent(line) {
+  let ev;
+  try { ev = JSON.parse(line); } catch { return; }
+  if (ev.ev === "progress") setProgress(Number(ev.p) || 0, "upload");
+  else if (ev.ev === "ready") {
+    flow.ready(ev.flow);
+    ctxMax = Number(ev.model && ev.model.ctx) || 0;
+    ctxPos = 0;
+    updateCtx();
+    onReady();
+  }
+  else if (ev.ev === "flow") {
+    try { flow.frame(ev); } catch (e) { console.error(e); notice(e.message); }
+  }
+  else if (ev.ev === "token") onToken(ev);
+  else if (ev.ev === "done") onDone(ev);
+  else if (ev.ev === "reset" && silentReset) {
+    const done = silentReset;
+    silentReset = null;
+    ctxPos = 0;
+    updateCtx();
+    done();
+  }
+  else if (ev.ev === "notice" && /context is full/i.test(ev.msg || "") && chatId && !compacting && lastChatCmd) {
+    recoverFull(lastChatCmd);
+  }
+  else if (ev.ev === "reset") {
+    assistant = null;
+    rawAnswer = "";
+    toolRounds = 0;
+    replaceNext = false;
+    hidingTool = false;
+    afterPlain = null;
+    lastAsk = "";
+    pendingLearn = "";
+    welcome();
+    status("Ready", "ready");
+    setBusy(false);
+  }
+  else if (ev.ev === "notice") {
+    // A refused turn never sends done: release a summary turn that waits on it.
+    if (afterPlain) {
+      const cb = afterPlain;
+      afterPlain = null;
+      cb(null);
+    }
+    notice(ev.msg || "That message was not run.");
+  }
+  else if (ev.ev === "error") {
+    if (swapping) {
+      const s = swapping;
+      swapping = null;
+      s.reject(new Error(ev.msg || "the model stopped"));
+    }
+    status("Stopped", "fail");
+    notice(ev.msg || shownName() + " stopped.");
+    setBusy(false);
+    ready = false;
+  }
+}
+function onOut(text) {
+  lineBuf += text;
+  let nl;
+  while ((nl = lineBuf.indexOf("\n")) >= 0) {
+    const line = lineBuf.slice(0, nl).trim();
+    lineBuf = lineBuf.slice(nl + 1);
+    if (line) onEvent(line);
+  }
+}
+
+let worker = null;
+function start(files) {
+  if (worker) worker.terminate();
+  ready = false;
+  generating = false;
+  assistant = null;
+  lineBuf = "";
+  stopByte[0] = 0;
+  Atomics.store(i32, 0, 0);
+  Atomics.store(i32, 1, 0);
+  if (!swapping) showLoading("Starting " + shownName() + ".");
+  shownMax = 0;
+  sawDownload = false;
+  $("bar-fill").style.width = "0%";
+  status("Starting", "busy");
+  $("stop").hidden = true;
+  $("msg").disabled = true;
+  $("send").disabled = true;
+  $("think").disabled = true;
+  $("plus").disabled = true;
+  $("newchat").disabled = true;
+  files.stop = { sab: stopSab, off: 0, size: 1 };
+  const args = [
+    "bitnet.wasm", "-model", "model", "-kernels", "kernels",
+    "-ui", "-stop", "stop", "-system", SYSTEM,
+  ];
+  flow.wire(files, args);
+  worker = new Worker(new URL("champ-worker.js", here), { type: "module" });
+  worker.onmessage = (e) => {
+    const m = e.data || {};
+    if (m.type === "worker-ready") {
+      worker.postMessage({ type: "boot", wasm: new URL("bitnet.wasm", here).href, args, files, sab });
+      status("Starting", "busy");
+    } else if (m.type === "progress") setProgress(Number(m.p) || 0, "download");
+    else if (m.type === "out") onOut(m.text || "");
+    else if (m.type === "err" && m.text && m.text.trim()) {
+      console.error(m.text);
+      const line = m.text.trim().split("\n")[0].slice(0, 200);
+      if (!ready) showLoading(line);
+      notice(shownName() + " ran into a problem.");
+    }
+    else if (m.type === "exit") {
+      if (swapping) {
+        const s = swapping;
+        swapping = null;
+        s.reject(new Error("the model stopped while loading"));
+      }
+      if (lineBuf.trim()) onEvent(lineBuf.trim());
+      lineBuf = "";
+      if (statusText.textContent !== "Stopped") status("Session ended", "fail");
+      ready = false;
+      setBusy(false);
+      $("msg").disabled = true;
+      $("send").disabled = true;
+      $("think").disabled = true;
+      $("plus").disabled = true;
+    }
+  };
+  worker.onerror = (e) => {
+    if (swapping) {
+      const s = swapping;
+      swapping = null;
+      s.reject(new Error(e.message || "the runtime failed to start"));
+    }
+    status("Stopped", "fail");
+    notice(e.message || "The runtime failed to start.");
+  };
+}
+
+async function go(make) {
+  try {
+    if (!crossOriginIsolated) throw new Error("Open " + shownName() + " from Encryptid so it can start.");
+    if (!navigator.gpu) throw new Error("This browser cannot run " + shownName() + ".");
+    status("Preparing", "busy");
+    showLoading("Preparing " + shownName() + ".");
+    const files = await make();
+    Object.assign(files, await kernels());
+    start(files);
+  } catch (e) {
+    status("Unavailable", "fail");
+    $("loading-copy").textContent = e && e.message ? e.message : String(e);
+    showLoading($("loading-copy").textContent);
+  }
+}
+
+function plainChat(text, max) {
+  return new Promise((resolve) => {
+    afterPlain = (visible) => resolve(visible);
+    held = "";
+    holding = true;
+    hidingTool = false;
+    rawAnswer = "";
+    if (!command({ op: "chat", text, system: SYSTEM, max })) {
+      afterPlain = null;
+      resolve(null);
+    }
+  });
+}
+function answerParts() {
+  const row = document.createElement("div");
+  row.className = "msg assistant";
+  const box = document.createElement("div");
+  box.className = "bubble";
+  const who = document.createElement("span");
+  who.className = "who";
+  whoLabel(who, undefined);
+  const thoughts = document.createElement("div");
+  thoughts.className = "thoughts";
+  const body = document.createElement("div");
+  box.append(who, thoughts, body);
+  row.append(box);
+  thread.append(row);
+  thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
+  return { thoughts, body };
+}
+async function deepThink(question) {
+  const parts = answerParts();
+  const lines = [];
+  const id = String(mind.head() + 1);
+  for (let step = 1; step <= 3; step++) {
+    if (stopByte[0]) break;
+    status("Thinking", "busy");
+    const live = document.createElement("div");
+    parts.thoughts.append(live);
+    assistant = live;
+    const got = await plainChat(thoughtPrompt(step, question, lines.join(" ")), 64);
+    if (got == null) {
+      if (!lines.length) notice("That message is too long for one turn.");
+      break;
+    }
+    if (stopByte[0]) break;
+    const sentence = got.replace(/\s+/g, " ").trim();
+    if (!sentence) {
+      live.remove();
+      continue;
+    }
+    live.textContent = step + ". " + sentence;
+    mind.commit("think", id + "/" + step, sentence.slice(0, 700));
+    lines.push(sentence);
+  }
+  assistant = parts.body;
+  if (stopByte[0] || !lines.length) {
+    finishTurn(lastDone);
+    return;
+  }
+  status("Thinking", "busy");
+  const notes = mind.recall(question);
+  const got = await plainChat(explainPrompt(question, lines, notes), 256);
+  const answer = (got || "").trim();
+  if (!stopByte[0] && answer && !offerLearn(question, answer)) {
+    mind.learn(question, answer);
+  }
+  finishTurn(lastDone);
+}
+function offerLearn(question, said) {
+  if (!question || !unknownReply(said)) return false;
+  if (asksClock(question) && !wantsLookup(question) && !wantsTeach(question)) return false;
+  if (assistant) assistant.textContent = "Would you like me to learn this?";
+  pendingLearn = question;
+  return true;
+}
+async function fromModelTool(t, q, learn) {
+  assistant = bubble("assistant", "");
+  const beat = route(ctxFull(), KIND.tool);
+  if (accept(KIND.tool, { busy: true, loading: !ready || !!swapping, queue: beats.length }) === "take") {
+    showLoad(assistant, learn ? "Learning…" : "Searching…", "", beat);
+  }
+  status(learn ? "Learning…" : "Searching…", "busy");
+  let ran = { output: "" };
+  try { ran = await runTool({ tool: "search", args: { q } }); }
+  catch { ran = { output: "" }; }
+  if (stopByte[0]) {
+    finishTurn(null);
+    return;
+  }
+  if (!ran.output || ran.output === "The lookup failed." || ran.output === "Missing search query.") {
+    assistant.textContent = learn ? shownName() + " could not learn that." : "The lookup failed.";
+    finishTurn(null);
+    return;
+  }
+  if (learn) {
+    mind.learn(q, ran.output);
+  }
+  let wire = "Results:\n" + ran.output + "\nThe person asked: " + t + "\nAnswer the person in plain words. Do not use JSON.";
+  const note = learn ? "" : mind.recall(t);
+  if (note) wire = "Notes:\n" + note + "\n" + wire;
+  assistant.textContent = "";
+  held = "";
+  holding = true;
+  hidingTool = false;
+  rawAnswer = "";
+  status("Thinking", "busy");
+  if (!command({ op: "chat", text: wire, system: SYSTEM })) {
+    assistant.textContent = ran.output;
+    finishTurn(null);
+  }
+}
+// opts.from: an edited message replaces seq `from` and everything after it.
+// opts.regen: answer the user message at that seq again.
+async function ask(text, opts) {
+  const o = opts || {};
+  const t = text.trim();
+  if (!t) return;
+  turnPresence = presenceOf(t, { think: thinkOn });
+  turnMix = mixOf(t, { think: thinkOn });
+  if (accept(KIND.chat, { busy: generating || compacting, loading: !ready || !!swapping, queue: beats.length }) === "stall") {
+    if (ready && beats.length < DEPTH) beats.push([text, opts]);
+    return;
+  }
+  if (!chatId) {
+    chatId = chats.create(t);
+    setHash(chatId);
+    if (thread.querySelector(".chips")) thread.textContent = "";
+  }
+  let userSeq;
+  if (o.regen != null) {
+    chats.truncate(chatId, o.regen + 1);
+    primedId = null;
+    userSeq = o.regen;
+    showChat(chatId);
+  } else {
+    if (o.from != null) {
+      chats.truncate(chatId, o.from);
+      primedId = null;
+      showChat(chatId);
+    }
+    userSeq = chats.add(chatId, { role: "user", text: t });
+    userRow(t, userSeq);
+  }
+  noteUrls(t);
+  refreshList();
+  toEnd();
+  stopByte[0] = 0;
+  toolRounds = 0;
+  replaceNext = false;
+  hidingTool = false;
+  status("Thinking", "busy");
+  setBusy(true);
+  // /run, /notes, /note, /task, /tasks, /done, /canvas: the tool runs as typed.
+  const direct = slashCall(text);
+  if (direct) {
+    pendingLearn = "";
+    status(toolStatus(direct.tool).replace("…", ""), "busy");
+    let ran;
+    try { ran = await runAgent(direct); } catch { ran = { output: "The tool failed.", exit_code: 1 }; }
+    addCard({ tool: direct.tool, args: direct.args, output: ran.output, exit_code: ran.exit_code, data: ran.data || null });
+    finishTurn(null);
+    return;
+  }
+  // The router (router.js): the gate picks this message's engine and the tools it needs. A different
+  // model than the loaded one is a hand-off that carries the continuity chain.
+  const d = decide({ text: t, mode, models, loaded: modelId, think: thinkOn, picks: [...picks] });
+  if (d.model && d.swap && !(await handoff(d.model, d.reason))) d.think = thinkOn;
+  const on = modelOf(modelId);
+  turnVia = on ? { id: on.id, name: on.name, tier: on.tier || "", label: engineOf(on) && mode === "auto" ? engineOf(on).label : on.name, reason: on.id === (d.model && d.model.id) ? d.reason : "" } : null;
+  status("Thinking", "busy");
+  await prime(t, userSeq);
+  if (pendingLearn && acceptsLearn(t)) {
+    const q = pendingLearn;
+    pendingLearn = "";
+    lastAsk = q;
+    await fromModelTool(q, q, true);
+    return;
+  }
+  if (pendingLearn && declinesLearn(t)) {
+    pendingLearn = "";
+    assistant = bubble("assistant", "Okay.");
+    finishTurn(null);
+    return;
+  }
+  pendingLearn = "";
+  lastAsk = t;
+  const chosen = d.tools;
+  // Search alone runs the search on the message; other picks tell the model which tool to call.
+  if (chosen.length === 1 && chosen[0] === "search") {
+    await fromModelTool(t, lookupQuery(t), false);
+    return;
+  }
+  if (!chosen.length && (wantsTeach(t) || wantsLookup(t))) {
+    const learn = wantsTeach(t);
+    await fromModelTool(t, learn ? teachQuery(t) : lookupQuery(t), learn);
+    return;
+  }
+  if (d.think && !chosen.length) {
+    deepThink(t).catch(() => {
+      notice(shownName() + " ran into a problem.");
+      finishTurn(null);
+    });
+    return;
+  }
+  assistant = bubble("assistant", "");
+  held = "";
+  holding = true;
+  rawAnswer = "";
+  let wire = asksClock(t) ? ("Current local time: " + clockText() + "\n" + t) : t;
+  const hint = pickedHint(chosen);
+  if (hint) wire = hint + "\n" + wire;
+  const note = mind.recall(t);
+  if (note) wire = "Notes:\n" + note + "\n" + wire;
+  if (!command({ op: "chat", text: wire, system: SYSTEM })) {
+    notice("That message is too long for one turn.");
+    setBusy(false);
+  }
+}
+
+$("newchat").onclick = () => newChat();
+$("chat-search").addEventListener("input", () => refreshList());
+function closeDrawer() {
+  $("side").classList.remove("open");
+  $("scrim").hidden = true;
+  $("menu").setAttribute("aria-expanded", "false");
+}
+$("menu").onclick = () => {
+  const open = !$("side").classList.contains("open");
+  $("side").classList.toggle("open", open);
+  $("scrim").hidden = !open;
+  $("menu").setAttribute("aria-expanded", open ? "true" : "false");
+};
+$("scrim").onclick = closeDrawer;
+thread.parentElement.addEventListener("scroll", () => { $("to-end").hidden = nearEnd() || thread.hidden; });
+$("to-end").onclick = () => { toEnd(); $("to-end").hidden = true; };
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && editFrom != null) {
+    editFrom = null;
+    $("msg").value = "";
+    $("msg").placeholder = "Message " + shownName();
+  }
+});
+refreshList();
+$("stop").onclick = () => { stopByte[0] = 1; status("Stopping", "busy"); };
+$("think").onclick = () => {
+  thinkOn = !thinkOn;
+  $("think").setAttribute("aria-pressed", thinkOn ? "true" : "false");
+};
+// + : tools the person picks stay chosen for the next messages until removed.
+const picks = new Set();
+function closeTools() {
+  $("tool-menu").hidden = true;
+  $("plus").setAttribute("aria-expanded", "false");
+}
+function renderPicks() {
+  for (const b of $("tool-menu").children) b.setAttribute("aria-checked", picks.has(b.dataset.tool) ? "true" : "false");
+  const box = $("picked");
+  box.textContent = "";
+  for (const p of PICKS) {
+    if (!picks.has(p.tool)) continue;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.textContent = p.label + " ×";
+    chip.setAttribute("aria-label", "Stop using " + p.label);
+    chip.onclick = () => { picks.delete(p.tool); renderPicks(); $("msg").focus(); };
+    box.append(chip);
+  }
+  box.hidden = !picks.size;
+}
+for (const p of PICKS) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.setAttribute("role", "menuitemcheckbox");
+  b.dataset.tool = p.tool;
+  b.textContent = p.label;
+  b.onclick = () => {
+    if (picks.has(p.tool)) picks.delete(p.tool);
+    else picks.add(p.tool);
+    renderPicks();
+  };
+  $("tool-menu").append(b);
+}
+renderPicks();
+$("plus").onclick = () => {
+  const open = $("tool-menu").hidden;
+  $("tool-menu").hidden = !open;
+  $("plus").setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) $("tool-menu").firstElementChild.focus();
+};
+document.addEventListener("click", (e) => {
+  if (!$("tool-menu").hidden && !e.target.closest(".tool-pick")) closeTools();
+});
+$("tool-menu").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeTools(); $("plus").focus(); }
+});
+$("chat").onsubmit = (e) => {
+  e.preventDefault();
+  const t = $("msg").value;
+  if (!t.trim() || !ready || generating || compacting) return;
+  $("msg").value = "";
+  $("msg").style.height = "auto";
+  $("msg").placeholder = "Message " + shownName();
+  const from = editFrom;
+  editFrom = null;
+  ask(t, from != null ? { from } : undefined);
+};
+$("msg").addEventListener("input", () => {
+  $("msg").style.height = "auto";
+  $("msg").style.height = Math.min(160, $("msg").scrollHeight) + "px";
+});
+$("msg").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    $("chat").requestSubmit();
+  }
+});
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+go(async () => fromUrl(await pickModel()));
+</script>
+</body>
+</html>

@@ -94,3 +94,4 @@ toolchain/_*
 /toolchain/lib/libclang-cpp.so
 /toolchain/lib/libclang.so
 /toolchain/lib/libclang.so.23.1-wasi-sdk
+*_gen.rsp

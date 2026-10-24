@@ -82,9 +82,28 @@ if defined WASIGO_REACT if not defined WASIGO_WPR (
 )
 if defined WASIGO_REACT set WASIGOC_EXTRA=!WASIGOC_EXTRA! --import-dir="!WASIGO_REACT!\go"
 
+rem WASMWebGPU links only into a program that imports "webgpu": wasigoc
+rem writes stdlib_webgpu_gen.hpp then. A stale one from an earlier build
+rem must not count, so it goes first.
+if exist "%GO_DIR%\stdlib_webgpu_gen.hpp" del /q "%GO_DIR%\stdlib_webgpu_gen.hpp"
+
 echo [wasigoc] %GO_ABS%
 "%WASIGOC_EXE%" "%GO_ABS%" -o "%GENCPP%" --out-dir "%GO_DIR%" %WASIGOC_EXTRA%
 if errorlevel 1 exit /b 1
+
+set "WASIGO_WEBGPU_I="
+set "WASIGO_WEBGPU_D="
+set "WASIGO_WEBGPU_CC="
+if exist "%GO_DIR%\stdlib_webgpu_gen.hpp" (
+  if not exist "%WASIGO_ROOT%\WASMWebGPU\src\catalog.cc" (
+    echo error: this program imports webgpu but WASMWebGPU\ is missing
+    exit /b 1
+  )
+  set WASIGO_WEBGPU_I=-I "%WASIGO_ROOT%\WASMWebGPU\include"
+  set WASIGO_WEBGPU_D=-DWASIGO_HAS_WEBGPU=1
+  set WASIGO_WEBGPU_CC="%WASIGO_ROOT%\WASMWebGPU\src\catalog.cc" "%WASIGO_ROOT%\WASMWebGPU\src\remote.cc"
+  echo             -I "%WASIGO_ROOT%\WASMWebGPU\include" ^(webgpu catalog: import webgpu.batch^)
+)
 
 call :find_toolchain
 if not defined WASIGO_CLANG (
@@ -180,8 +199,8 @@ if defined WASIGO_NIX (
   set WASIGO_NIX_I=-I "!WASIGO_NIX!\include"
   echo             -I "!WASIGO_NIX!\include" ^(WASMNix WSL^)
   if exist "!WASIGO_NIX!\src\catalog.cc" (
-    set WASIGO_NIX_CC="!WASIGO_NIX!\src\catalog.cc" "!WASIGO_NIX!\src\call.cc"
-    echo             WASMNix catalog on EPT ^(CHPT session, WSL^)
+    set WASIGO_NIX_CC="!WASIGO_NIX!\src\catalog.cc" "!WASIGO_NIX!\src\call.cc" "!WASIGO_NIX!\src\cage_wsl.cc"
+    echo             WASMNix catalog on EPT ^(CHPT session, WSL, in-cage hop^)
   )
 )
 if exist "%WASIGO_ROOT%\WASMDroid\include\droid\phonelink.hpp" set "WASIGO_DROID=%WASIGO_ROOT%\WASMDroid"
@@ -199,29 +218,39 @@ if defined WASIGO_DROID (
     echo             WASMDroid catalog on EPT ^(CHPT session, Phone Link^)
   )
 )
-rem Prefer the canonical ~/WASMGocOS (the in-repo copy is stale). Same
-rem resolution order as WASMChrome below.
+rem WASMGocOS and WASMNetStack are in this repo (the canonical trees).
+rem GocKrnl boots over the Plan 9 session, so the kernel links whole: the
+rem module set of WASMGocOS's own wasigocvm build (its CMakeLists.txt),
+rem with goclibc still the host's (no GOCLIBC_IN_KERNEL). The vCPU is the
+rem software WHv processor (src\vcpu_whp.cc on the x86 engine, src\x86.cc)
+rem under TurboSpace's hv-partition, the pair HeapVM runs.
 set "WASIGO_GOCOS="
-if exist "%USERPROFILE%\WASMGocOS\include\gocos\host.hpp" set "WASIGO_GOCOS=%USERPROFILE%\WASMGocOS"
-if not defined WASIGO_GOCOS if exist "%WASIGO_ROOT%\..\WASMGocOS\include\gocos\host.hpp" for %%I in ("%WASIGO_ROOT%\..\WASMGocOS") do set "WASIGO_GOCOS=%%~fI"
-if not defined WASIGO_GOCOS if exist "%WASIGO_ROOT%\WASMGocOS\include\gocos\host.hpp" set "WASIGO_GOCOS=%WASIGO_ROOT%\WASMGocOS"
+set "WASIGO_WNS="
+if exist "%WASIGO_ROOT%\WASMGocOS\src\session.cc" set "WASIGO_GOCOS=%WASIGO_ROOT%\WASMGocOS"
 if not defined WASIGO_GOCOS (
-  echo error: wasigocvm requires WASMGocOS ^(gocos/host.hpp^)
+  echo error: wasigocvm requires WASMGocOS\ in this repo ^(src/session.cc^)
   exit /b 2
 )
-set "WASIGO_GOCOS_I="
-set "WASIGO_GOCOS_CC="
-if defined WASIGO_GOCOS (
-  set WASIGO_GOCOS_I=-I "!WASIGO_GOCOS!\include"
-  echo             -I "!WASIGO_GOCOS!\include" ^(WASMGocOS edge kernel^)
-  if exist "!WASIGO_GOCOS!\src\catalog.cc" (
-    set WASIGO_GOCOS_CC="!WASIGO_GOCOS!\src\catalog.cc"
-    echo             WASMGocOS catalog on EPT ^(CHPT session, GocDesk^)
-  )
-  if exist "!WASIGO_GOCOS!\src\vcpu.cc" (
-    set WASIGO_GOCOS_CC=!WASIGO_GOCOS_CC! "!WASIGO_GOCOS!\src\vcpu.cc"
-    echo             WASMGocOS vcpu ^(wasmturbo_vcpu_* on wasmwin32_call^)
-  )
+if exist "%WASIGO_ROOT%\WASMNetStack\include\wns\stack.h" set "WASIGO_WNS=%WASIGO_ROOT%\WASMNetStack"
+if not defined WASIGO_WNS (
+  echo error: wasigocvm requires WASMNetStack\ in this repo ^(wns/stack.h^)
+  exit /b 2
+)
+set WASIGO_GOCOS_I=-I "!WASIGO_GOCOS!\include" -I "!WASIGO_WNS!\include"
+set WASIGO_GOCOS_D=-DWASIGO_HAS_WASMGOCOS=1 -DWASMGOCOS_HAS_JITRT=1 -DWASMGOCOS_HAS_VCPU=1 -DWASMGOCOS_HAS_NET=1
+set WASIGO_GOCOS_CC=
+for %%F in (catalog unil host_wasi jitrt bbx session sh ctr svc react peinterp wasi files klock stream net x86 vcpu_whp) do set WASIGO_GOCOS_CC=!WASIGO_GOCOS_CC! "!WASIGO_GOCOS!\src\%%F.cc"
+echo             -I "!WASIGO_GOCOS!\include" ^(WASMGocOS kernel, Plan 9 session, Sh, Vfs, WHv vCPU^)
+rem WASMWine: kernel32/ntdll PE images for peinterp, when the sibling is there.
+set "WASIGO_WINE="
+set "WASIGO_WINE_I="
+set "WASIGO_WINE_CC="
+if exist "%USERPROFILE%\WASMWine\include\wine\dll.h" set "WASIGO_WINE=%USERPROFILE%\WASMWine"
+if not defined WASIGO_WINE if exist "%WASIGO_ROOT%\..\WASMWine\include\wine\dll.h" for %%I in ("%WASIGO_ROOT%\..\WASMWine") do set "WASIGO_WINE=%%~fI"
+if defined WASIGO_WINE (
+  set WASIGO_WINE_I=-I "!WASIGO_WINE!\include"
+  set WASIGO_WINE_CC="!WASIGO_WINE!\src\dll.cc"
+  echo             -I "!WASIGO_WINE!\include" ^(WASMWine PE images^)
 )
 set "WASIGO_CHROME="
 if exist "%USERPROFILE%\WASMChrome\include\chrome\host.hpp" set "WASIGO_CHROME=%USERPROFILE%\WASMChrome"
@@ -246,7 +275,7 @@ set "WASIGO_SAFE_I="
 set "WASIGO_SAFE_CC="
 if defined WASIGO_SAFE (
   set WASIGO_SAFE_I=-I "!WASIGO_SAFE!\include" -I "!WASIGO_SAFE!"
-  set WASIGO_SAFE_CC="!WASIGO_SAFE!\src\sandbox\sandbox.cc" "!WASIGO_SAFE!\src\sandbox\external-pointer-table.cc" "!WASIGO_SAFE!\src\sandbox\trusted-pointer-table.cc"
+  set WASIGO_SAFE_CC="!WASIGO_SAFE!\src\sandbox\sandbox.cc" "!WASIGO_SAFE!\src\sandbox\external-pointer-table.cc" "!WASIGO_SAFE!\src\sandbox\trusted-pointer-table.cc" "!WASIGO_SAFE!\src\sandbox\code-pointer-table.cc"
   echo             WASMSafeSpace EPT/TPT ^(exec second address space^)
 )
 set "WASIGO_V8="
@@ -289,8 +318,8 @@ set "WASIGO_REACT_I="
 set "WASIGO_REACT_CC="
 set "WASIGO_REACT_D="
 if defined WASIGO_REACT (
-  set WASIGO_REACT_I=-I "!WASIGO_REACT!\include" -I "!WASIGO_REACT_IPT!" -I "!WASIGO_WPR!\include" -I "!WASIGO_WPR!\src" -I "!USERPROFILE!\WASMChrome\include" -I "!USERPROFILE!\WASMNetStack\include"
-  set WASIGO_REACT_CC="!WASIGO_REACT!\src\unity.cc" "!WASIGO_REACT_IPT!\src\sandbox\indirect-pointer-table.cc"
+  set WASIGO_REACT_I=-I "!WASIGO_REACT!\include" -I "!WASIGO_REACT_IPT!" -I "!WASIGO_WPR!\include" -I "!WASIGO_WPR!\src" -I "!USERPROFILE!\WASMChrome\include"
+  set WASIGO_REACT_CC="!WASIGO_REACT!\src\unity.cc" "!WASIGO_REACT_IPT!\src\sandbox\indirect-pointer-table.cc" "!WASIGO_REACT!\src\ps\drvfs.cc"
   set WASIGO_REACT_D=-DWASIGO_HAS_WASMREACT=1
   echo             -I "!WASIGO_REACT!\include" ^(WASMReact ReactOS kernel on EPT/TPT/CHPT/IPT^)
 )
@@ -301,26 +330,76 @@ if not defined WASIGO_TURBO (
   echo error: wasigocvm requires WASMTurboSpace ^(host-calls.cc^)
   exit /b 2
 )
-set "WASIGO_TURBO_I=-I "!WASIGO_TURBO!""
-set "WASIGO_TURBO_CC="!WASIGO_TURBO!\src\hostcalls\host-calls.cc" "!WASIGO_TURBO!\src\runtime\reactos.cc""
-echo             WASMTurboSpace host-calls ^(wasmturbo_catalog_call^)
+set "WASIGO_TURBO_I=-I "!WASIGO_TURBO!" -I "!WASIGO_TURBO!\include""
+set "WASIGO_TURBO_CC="!WASIGO_TURBO!\src\hostcalls\host-calls.cc" "!WASIGO_TURBO!\src\runtime\reactos.cc" "!WASIGO_TURBO!\src\exec\executable-memory-posix.cc" "!WASIGO_TURBO!\src\hv\hv-partition.cc""
+rem The engine GocOS runs its guests on (WASMTurboSpace wasmturbo_engine,
+rem as its CMakeLists.txt builds it for wasigocvm).
+for %%F in (wasm\module-decoder liftoff\liftoff-compiler runtime\trap runtime\exn runtime\imports runtime\context runtime\memory runtime\runtime runtime\intern runtime\call runtime\bulk runtime\lazy runtime\unil runtime\mss runtime\dllwasm runtime\vfs turbofan\graph-builder turbofan\reducer turbofan\scheduler turbofan\codegen turbofan\pipeline interp\interpreter instance) do set WASIGO_TURBO_CC=!WASIGO_TURBO_CC! "!WASIGO_TURBO!\src\%%F.cc"
+echo             WASMTurboSpace host-calls and engine ^(runtime, Vfs, UNIL, tiers^)
+rem WASMNetStack: the Plan 9 hop GocKrnl boots over (WASMGocOS net.cc). With
+rem WASMReact linked, its unity.cc already compiles rpc.cc and locator.cc.
+set WASIGO_WNS_CC=
+for %%F in (addr classify nat gossip wss chunk demux assoc gls bgp dns ua anycast stack ipify flow proxy sock link proxyd tty status c\system) do set WASIGO_WNS_CC=!WASIGO_WNS_CC! "!WASIGO_WNS!\src\%%F.cc"
+if not defined WASIGO_REACT set WASIGO_WNS_CC=!WASIGO_WNS_CC! "!WASIGO_WNS!\src\rpc.cc" "!WASIGO_WNS!\src\locator.cc"
+set WASIGO_WNS_I=-I "!WASIGO_WNS!\src"
+echo             WASMNetStack ^(Plan 9 session link^)
+rem GocOS containers (ctr.cc): wasmv8_facade over the one quickjs-ng
+rem WASMv8bindings FetchContents (target qjs, v0.16.2). No second tree.
+set WASIGO_V8F_CC=
+for %%F in (isolate context exception object template function script primitive) do set WASIGO_V8F_CC=!WASIGO_V8F_CC! "!WASIGO_V8!\src\v8\%%F.cc"
+set "QJS_SRC="
+for %%D in (
+  "!WASIGO_V8!\build-wasi\_deps\quickjs-src"
+  "!WASIGO_V8!\build\_deps\quickjs-src"
+  "%WASIGO_ROOT%\..\WASMVoodooCompile\WASMv8bindings\build-wasi\_deps\quickjs-src"
+  "%USERPROFILE%\WASMVoodooCompile\WASMv8bindings\build-wasi\_deps\quickjs-src"
+  "%WASIGO_ROOT%\..\WASMVoodooCompile\WASMv8bindings\build\_deps\quickjs-src"
+  "%USERPROFILE%\WASMVoodooCompile\WASMv8bindings\build\_deps\quickjs-src"
+) do (
+  if not defined QJS_SRC if exist "%%~D\quickjs.c" set "QJS_SRC=%%~D"
+)
+if not defined QJS_SRC (
+  echo error: wasigocvm needs the quickjs WASMv8bindings already fetched ^(target qjs, v0.16.2^).
+  echo        Configure that repo so wasmv8_facade exists. Do not vendor a second quickjs-ng.
+  exit /b 2
+)
+set "QJS_OUT=%WASIGO_ROOT%\build\wasigocvm-quickjs"
+set "QJS_STAMP="
+if exist "%QJS_OUT%\qjs.src" set /p QJS_STAMP=<"%QJS_OUT%\qjs.src"
+if not "!QJS_STAMP!"=="!QJS_SRC!" if exist "%QJS_OUT%" rmdir /s /q "%QJS_OUT%"
+if not exist "%QJS_OUT%" mkdir "%QJS_OUT%"
+> "%QJS_OUT%\qjs.src" echo(!QJS_SRC!
+set "WASIGO_CC=%WASIGO_CLANG:clang++=clang%"
+set WASIGO_QJS_O=
+for %%F in (quickjs libregexp libunicode dtoa quickjs-libc) do (
+  if not exist "%QJS_OUT%\%%F.o" (
+    "!WASIGO_CC!" -c -O2 -std=gnu11 -funsigned-char -fvisibility=hidden -mllvm -wasm-enable-sjlj -DQJS_BUILD_LIBC -DQUICKJS_NG_BUILD -D_GNU_SOURCE -D_REENTRANT -D_WASI_EMULATED_GETPID -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_SIGNAL -isystem "%WASIGO_SYSROOT%\include\%WASIGO_TRIPLE%" -isystem "%WASIGO_SYSROOT%\include" -I "%QJS_SRC%" -o "%QJS_OUT%\%%F.o" "%QJS_SRC%\%%F.c"
+    if errorlevel 1 (
+      echo quickjs-ng %%F failed
+      exit /b 1
+    )
+  )
+  set WASIGO_QJS_O=!WASIGO_QJS_O! "%QJS_OUT%\%%F.o"
+)
+echo             quickjs-ng from WASMv8bindings ^(!QJS_SRC!^)
 set "GOCLC_WRAP=-Wl,--wrap=fopen -Wl,--wrap=fclose -Wl,--wrap=fread -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fseek -Wl,--wrap=ftell -Wl,--wrap=fseeko -Wl,--wrap=ftello -Wl,--wrap=fileno -Wl,--wrap=fdopen -Wl,--wrap=feof -Wl,--wrap=ferror -Wl,--wrap=clearerr -Wl,--wrap=rewind -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=fstat -Wl,--wrap=mkdir -Wl,--wrap=rmdir -Wl,--wrap=unlink -Wl,--wrap=remove -Wl,--wrap=rename -Wl,--wrap=access -Wl,--wrap=getcwd -Wl,--wrap=chdir -Wl,--wrap=opendir -Wl,--wrap=readdir -Wl,--wrap=closedir -Wl,--wrap=pipe -Wl,--wrap=dup -Wl,--wrap=dup2"
-"%WASIGO_CLANG%" -O2 -std=c++20 -fuse-ld=lld ^
-  -fexceptions -frtti ^
-  -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false ^
-  -mllvm -wasm-enable-sjlj ^
-  -nostdinc++ ^
-  -isystem "%EH_INC%" ^
-  -isystem "%WASIGO_SYSROOT%\include\%WASIGO_TRIPLE%" ^
-  -isystem "%WASIGO_SYSROOT%\include" ^
-  -L "%EH_LIB%" -lc++ -lc++abi -lunwind ^
-  -Wl,--export=__indirect_function_table ^
-  %GOCLC_WRAP% ^
-  %WASIGO_PTHREAD_FLAGS% ^
-  -I "%GO_DIR%" -I "%WASIGO_SRC_INC%" !WASIGO_TURBO_I! !WASIGO_WIN32_I! !WASIGO_NIX_I! !WASIGO_DROID_I! !WASIGO_GOCOS_I! !WASIGO_CHROME_I! !WASIGO_PE_I! !WASIGO_SAFE_I! !WASIGO_V8_I! !WASIGO_SSL_I! !WASIGO_REACT_I! ^
-  -DWASIGO_GOCVM=1 !WASIGO_CHROME_D! !WASIGO_SSL_D! !WASIGO_REACT_D! -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID ^
-  -lwasi-emulated-mman -lsetjmp ^
-  -o "%OUTWASM%" "%GENCPP%" "%WASIGO_ROOT%\libc\goclibc.c" !WASIGO_TURBO_CC! !WASIGO_WIN32_CC! !WASIGO_NIX_CC! !WASIGO_DROID_CC! !WASIGO_GOCOS_CC! !WASIGO_CHROME_CC! !WASIGO_SAFE_CC! !WASIGO_V8_CC! !WASIGO_REACT_CC! !WASIGO_SSL_L!
+rem One response file: the source list is longer than cmd.exe takes on a
+rem command line (8191). It sits beside the generated C++.
+set "RSP=%GO_DIR%\%GO_BASE%_gen.rsp"
+> "%RSP%" echo(-O2 -std=c++20 -fuse-ld=lld -fexceptions -frtti -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false -mllvm -wasm-enable-sjlj -nostdinc++
+>> "%RSP%" echo(-isystem "%EH_INC%" -isystem "%WASIGO_SYSROOT%\include\%WASIGO_TRIPLE%" -isystem "%WASIGO_SYSROOT%\include" -L "%EH_LIB%" -lc++ -lc++abi -lunwind
+>> "%RSP%" echo(-Wl,--export=__indirect_function_table %GOCLC_WRAP% %WASIGO_PTHREAD_FLAGS%
+>> "%RSP%" echo(-I "%GO_DIR%" -I "%WASIGO_SRC_INC%" !WASIGO_TURBO_I! !WASIGO_WIN32_I! !WASIGO_NIX_I! !WASIGO_DROID_I! !WASIGO_GOCOS_I! !WASIGO_WNS_I! !WASIGO_WINE_I! !WASIGO_CHROME_I! !WASIGO_PE_I! !WASIGO_SAFE_I! !WASIGO_V8_I! !WASIGO_SSL_I! !WASIGO_REACT_I! !WASIGO_WEBGPU_I! -I "%QJS_SRC%"
+>> "%RSP%" echo(-DWASIGO_GOCVM=1 !WASIGO_CHROME_D! !WASIGO_GOCOS_D! !WASIGO_WEBGPU_D! !WASIGO_SSL_D! !WASIGO_REACT_D! -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS -D_REENTRANT
+>> "%RSP%" echo(-lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks -lsetjmp -o "%OUTWASM%"
+>> "%RSP%" echo("%GENCPP%" "%WASIGO_ROOT%\libc\goclibc.c" "%WASIGO_SYSROOT%\src\getpid.c"
+>> "%RSP%" echo(!WASIGO_TURBO_CC!
+>> "%RSP%" echo(!WASIGO_WIN32_CC! !WASIGO_NIX_CC! !WASIGO_DROID_CC!
+>> "%RSP%" echo(!WASIGO_GOCOS_CC! !WASIGO_WINE_CC!
+>> "%RSP%" echo(!WASIGO_WNS_CC!
+>> "%RSP%" echo(!WASIGO_V8F_CC! !WASIGO_QJS_O!
+>> "%RSP%" echo(!WASIGO_CHROME_CC! !WASIGO_SAFE_CC! !WASIGO_V8_CC! !WASIGO_REACT_CC! !WASIGO_WEBGPU_CC! !WASIGO_SSL_L!
+"%WASIGO_CLANG%" --rsp-quoting=windows @"%RSP%"
 if errorlevel 1 (
   echo wasigocvm clang++ failed
   exit /b 1

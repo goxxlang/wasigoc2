@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Embed check</title>
+</head>
+<body>
+<pre id="out">checking</pre>
+<script type="module">
+import { buildLut, embedTokens, embedGpu, tokensOf } from "./embed.js";
+const out = document.getElementById("out");
+const lut = buildLut();
+const ids = tokensOf("length of lake champlain");
+const js = embedTokens(ids, lut);
+const shader = await (await fetch(new URL("../kernels/embed_lut.wgsl", import.meta.url))).text();
+const gpu = await embedGpu(ids, lut, shader);
+let max = 0;
+for (let i = 0; i < js.length; i++) max = Math.max(max, Math.abs(js[i] - gpu[i]));
+out.textContent = max < 1e-4 ? "embed match " + max : "embed mismatch " + max;
+</script>
+</body>
+</html>

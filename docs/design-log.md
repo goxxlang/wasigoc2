@@ -2304,6 +2304,53 @@ registered`. Native leftover still links gocvm_sandbox in-process.
 stock wasm32-wasip1 noeh driver is `legacy.bat`. `wasigocvm.bat` stays
 as an alias. CMake `*_golden` vs `*_wasigocvm` is unchanged.
 
+## WebGPU, BitNet, and the canonical edge kernel (2026-10-12)
+
+`WASMWebGPU/` is in-tree: the emdawn `webgpu.h`, `src/remote.cc` (HeapVM's
+`webgpu_remote.cc`, import name now `WASIGO_WEBGPU_IMPORT_MODULE` /
+`_NAME`, default `webgpu.batch`; HeapVM's is `heap.gpu`), `src/catalog.cc`
+(the `webgpu` gocvm topic) and `js/webgpu-exec.js`. `wasigocvm.bat/.sh`
+link it only when wasigoc wrote `stdlib_webgpu_gen.hpp`, so other modules
+keep their import list. `examples/webgpupkg` is the smoke test;
+`examples/bitnet` runs BitNet b1.58 2B-4T (packed safetensors) in WGSL.
+
+WASMGocOS and WASMNetStack are now the canonical trees, in-tree, and the
+drivers link the kernel whole (WASMGocOS's own wasigocvm module set:
+session, Sh, Vfs, Plan 9 `net`, WHv vCPU `vcpu_whp` + `x86` under
+TurboSpace `hv-partition`, quickjs-ng from the one WASMv8bindings
+FetchContent (target `qjs`, behind `wasmv8_facade`)). WASMNix gained `cage_wsl.cc`; WASMReact's `ps/drvfs.cc`
+and the sysroot `getpid.c` are linked. The source list passed cmd.exe's
+8191 limit, so the link is a response file (`<prog>_gen.rsp`). The
+`*_wasigocvm` goldens now build through the driver
+(`tests/golden/run_wasigocvm.cmake`) instead of a third link list.
+
+Compiler/runtime/stdlib bugs found on the way:
+
+- `string(r)` for a rune/byte emitted `std::string(1, (char)r)`: now
+  UTF-8 (`wasigo::string_from_rune`).
+- stdout/stderr were buffered; Go's are not. `set_os_args` makes them
+  unbuffered (a prompt or streamed tokens show at once).
+- `strconv.ParseFloat` had no exponent (JSON `1e-05` failed) and summed
+  fractions by `*0.1`: now mantissa + decimal exponent, scaled once.
+- `math` had no `Float32bits`/`Float32frombits`/`Float64bits`/
+  `Float64frombits`: added, exact by powers of two.
+- `unicode.IsLetter/IsNumber/IsDigit/IsUpper/IsLower` were Latin-1 only:
+  generated category tables (`stdlib/unicode/gen_tables.py`).
+- `sort.Slice` was insertion sort: now heapsort (`SliceStable` stays
+  insertion).
+
+Still open (worked around in the new code, not fixed): `range pkg.F(...)`
+fails ("cannot resolve method call receiver type"); a composite literal in
+an `if`/`for` header does not parse; a type declared inside a function does
+not parse; `any == "lit"` and `switch anyVal` on strings do not compile;
+`range t.field` of a map behind a pointer misresolves the field; a struct
+field or method may not share a name with a type, a C++ keyword (`float`)
+or the generated `operator==` parameter (`o`); a func literal that becomes
+a coroutine cannot return multiple values; `[]bool` hits
+`std::vector<bool>`; a `*os.File` parameter does not accept `os.Open`'s
+result; `Fprintln` of a slice does not compile; there is no
+`strconv.FormatFloat`; error positions sometimes name the wrong file.
+
 ## License
 
 BSD-3-Clause.

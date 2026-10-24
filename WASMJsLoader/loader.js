@@ -639,10 +639,83 @@ function bindP2Imports(mod, imports, p2) {
   });
 }
 
+// A file's bytes: a Uint8Array, or a lazy source {size, readAt(pos, n)} the
+// page seeded (a Blob/File, {url, size} read by HTTP Range, {sab, off, size}
+// as a live view of a SharedArrayBuffer, or any {size, readAt} the worker
+// built, such as a BNZ view). Lazy files are read in the pieces the guest
+// asks for, so a large one (model weights) never sits whole in JS memory.
+// Blob and HTTP readers are synchronous: FileReaderSync and sync XHR exist
+// in workers, which is where a guest runs.
+function lazySource(v) {
+  if (v && typeof v.readAt === "function" && typeof v.size === "number" && typeof v.url !== "string" && !(typeof Blob !== "undefined" && v instanceof Blob) && !(typeof SharedArrayBuffer !== "undefined" && v.sab instanceof SharedArrayBuffer)) {
+    const src = {
+      size: v.size,
+      readAt(pos, n) { return v.readAt(pos, n); },
+    };
+    // A streaming store (the phone embedding file) writes in place. Dropping
+    // writeAt would make the guest copy the whole file into one array.
+    if (typeof v.writeAt === "function") src.writeAt = function (pos, data) { return v.writeAt(pos, data); };
+    if (typeof v.flush === "function") src.flush = function () { v.flush(); };
+    return src;
+  }
+  if (typeof Blob !== "undefined" && v instanceof Blob) {
+    return {
+      size: v.size,
+      readAt(pos, n) {
+        return new Uint8Array(new FileReaderSync().readAsArrayBuffer(v.slice(pos, pos + n)));
+      },
+    };
+  }
+  // A live view of shared memory: the page writes it, the guest reads its
+  // current bytes on every read (a stop flag, a control word), and a guest
+  // write lands in it in place (a frame the page reads back). Its size is
+  // fixed: writeAt refuses bytes past the end.
+  if (v && typeof SharedArrayBuffer !== "undefined" && v.sab instanceof SharedArrayBuffer) {
+    const off = v.off | 0;
+    const size = typeof v.size === "number" ? v.size : v.sab.byteLength - off;
+    return {
+      size,
+      readAt(pos, n) {
+        return new Uint8Array(v.sab, off + pos, Math.max(0, Math.min(n, size - pos))).slice();
+      },
+      writeAt(pos, src) {
+        if (pos < 0 || pos + src.length > size) return false;
+        new Uint8Array(v.sab, off + pos, src.length).set(src);
+        return true;
+      },
+    };
+  }
+  if (v && typeof v.url === "string" && typeof v.size === "number") {
+    return {
+      size: v.size,
+      readAt(pos, n) {
+        const x = new XMLHttpRequest();
+        x.open("GET", v.url, false);
+        x.setRequestHeader("Range", "bytes=" + pos + "-" + (pos + n - 1));
+        x.responseType = "arraybuffer";
+        x.send();
+        if (x.status !== 206 && x.status !== 200) throw new Error(v.url + ": HTTP " + x.status);
+        const got = new Uint8Array(x.response);
+        // A server that ignores Range sends the whole file.
+        return x.status === 200 ? got.subarray(pos, pos + n) : got;
+      },
+    };
+  }
+  return null;
+}
+
+function sizeOf(data) {
+  return data instanceof Uint8Array ? data.length : data.size;
+}
+
+function readOf(data, pos, n) {
+  return data instanceof Uint8Array ? data.subarray(pos, pos + n) : data.readAt(pos, n);
+}
+
 // Client file table for goclibc. The unil sandbox (wasmv16 / quickjs-ng)
 // is the JS runner, and this page is that client. serve.mjs only delivers
 // bytes; it does not instantiate the guest.
-function makeGocLibc(mem) {
+function makeGocLibc(mem, files) {
   const boxes = [null];
   const fds = [null];
   const dirs = new Set();
@@ -672,6 +745,16 @@ function makeGocLibc(mem) {
   }
   function newBox(path, data) {
     const box = { path: norm(path), data: data || new Uint8Array(0), refs: 1 };
+    // A phone opens one embedding slice per read (path/@offset). Reuse a
+    // closed slice slot so a long chat does not keep a box per token.
+    if (box.path.indexOf("/@") >= 0) {
+      for (let i = 1; i < boxes.length; i++) {
+        if (!boxes[i]) {
+          boxes[i] = box;
+          return i;
+        }
+      }
+    }
     boxes.push(box);
     return boxes.length - 1;
   }
@@ -691,21 +774,45 @@ function makeGocLibc(mem) {
       const app = flags & 16 ? 1 : 0;
       let data = null;
       const hit = boxes.find((b) => b && b.path === path);
-      if (!trunc && hit) data = hit.data;
+      // embed.bf16/@12345 is a read that starts at that byte. The guest has
+      // no Seek; the embedding table stays one OPFS file.
+      if (!hit && !trunc && !creat) {
+        const at = path.lastIndexOf("/@");
+        if (at > 0 && /^\d+$/.test(path.slice(at + 2))) {
+          const base = boxes.find((b) => b && b.path === path.slice(0, at));
+          const off = Number(path.slice(at + 2));
+          if (base && off >= 0 && off <= sizeOf(base.data)) {
+            const parent = base.data;
+            const size = sizeOf(parent) - off;
+            data = {
+              size,
+              readAt(pos, n) {
+                const avail = size - pos;
+                if (pos < 0 || avail <= 0) return new Uint8Array(0);
+                return readOf(parent, off + pos, Math.min(n, avail));
+              },
+            };
+            return newFd(newBox(path, data), 0, 0);
+          }
+        }
+      }
+      if (hit && hit.data && typeof hit.data.writeAt === "function") data = hit.data; // shared memory keeps its bytes: truncating means writing from the start
+      else if (!trunc && hit) data = hit.data;
       else if (!trunc && !creat && !hit) return -2;
       else data = new Uint8Array(0);
       const id = newBox(path, data);
       let pos = 0;
-      if (app) pos = boxes[id].data.length;
+      if (app) pos = sizeOf(boxes[id].data);
       return newFd(id, app, pos);
     },
     read(fd, ptr, n) {
       if (!fdOk(fd) || n <= 0) return fdOk(fd) ? 0 : -9;
       const slot = fds[fd];
       const data = boxes[slot.box].data;
-      if (slot.pos >= data.length) return 0;
-      const avail = Math.min(n, data.length - slot.pos);
-      bytes(mem(), ptr, avail).set(data.subarray(slot.pos, slot.pos + avail));
+      const size = sizeOf(data);
+      if (slot.pos >= size) return 0;
+      const avail = Math.min(n, size - slot.pos);
+      bytes(mem(), ptr, avail).set(readOf(data, slot.pos, avail));
       slot.pos += avail;
       return avail;
     },
@@ -714,6 +821,13 @@ function makeGocLibc(mem) {
       const slot = fds[fd];
       const box = boxes[slot.box];
       const src = n > 0 ? bytes(mem(), ptr, n) : new Uint8Array(0);
+      if (typeof box.data.writeAt === "function") { // shared memory, written in place
+        const at = slot.append ? box.data.size : slot.pos;
+        if (!box.data.writeAt(at, src)) return -27; // EFBIG: past the shared memory's end
+        slot.pos = at + src.length;
+        return src.length;
+      }
+      if (!(box.data instanceof Uint8Array)) box.data = box.data.readAt(0, box.data.size);
       if (slot.append) slot.pos = box.data.length;
       const end = slot.pos + src.length;
       const next = new Uint8Array(Math.max(box.data.length, end));
@@ -726,14 +840,16 @@ function makeGocLibc(mem) {
     close(fd) {
       if (!fdOk(fd)) return -9;
       const slot = fds[fd];
-      boxes[slot.box].refs--;
+      const box = boxes[slot.box];
+      box.refs--;
+      if (box.refs <= 0 && box.path.indexOf("/@") >= 0) boxes[slot.box] = null;
       fds[fd] = null;
       return 0;
     },
     seek(fd, off, whence) {
       if (!fdOk(fd)) return -9;
       const slot = fds[fd];
-      const len = boxes[slot.box].data.length;
+      const len = sizeOf(boxes[slot.box].data);
       let base = 0;
       if (whence === 1) base = slot.pos;
       if (whence === 2) base = len;
@@ -743,7 +859,10 @@ function makeGocLibc(mem) {
       return npos;
     },
     flush(fd) {
-      return fdOk(fd) ? 0 : -9;
+      if (!fdOk(fd)) return -9;
+      const data = boxes[fds[fd].box].data;
+      if (data && typeof data.flush === "function") data.flush();
+      return 0;
     },
     stat(pathPtr, pathLen, out) {
       const path = norm(readStr(pathPtr, pathLen));
@@ -753,13 +872,13 @@ function makeGocLibc(mem) {
       }
       const hit = boxes.find((b) => b && b.path === path && b.refs > 0);
       if (!hit) return -2;
-      putStat(out, 0, hit.data.length);
+      putStat(out, 0, sizeOf(hit.data));
       return 0;
     },
     fstat(fd, out) {
       if (!fdOk(fd)) return -9;
       const box = boxes[fds[fd].box];
-      putStat(out, dirs.has(box.path) ? 1 : 0, box.data.length);
+      putStat(out, dirs.has(box.path) ? 1 : 0, sizeOf(box.data));
       return 0;
     },
     mkdir(pathPtr, pathLen) {
@@ -848,6 +967,22 @@ function makeGocLibc(mem) {
       return newFd(slot.box, slot.append, slot.pos);
     },
   };
+  // Files the page seeded. fopen of a seeded path hits this table. A value
+  // is bytes (Uint8Array / ArrayBuffer / array), or a Blob / {url, size},
+  // which is read lazily (lazySource).
+  if (files) {
+    for (const path of Object.keys(files)) {
+      const p = norm(path);
+      let data = files[path];
+      if (!(data instanceof Uint8Array)) data = lazySource(data) || new Uint8Array(data || []);
+      newBox(p, data);
+      let d = parent(p);
+      while (d) {
+        dirs.add(d);
+        d = parent(d);
+      }
+    }
+  }
   return api;
 }
 
@@ -879,20 +1014,54 @@ export async function instantiate(bytes, opts) {
     wasi_snapshot_preview1: wasi.preview1,
     wasi_unstable: wasi.preview1,
     env,
-    goclibc: makeGocLibc(() => wasi.inst.exports.memory),
+    goclibc: makeGocLibc(() => wasi.inst.exports.memory, opts.files),
   };
   const imports = stubImports(mod, base);
   bindP2Imports(mod, imports, p2);
+  // webgpu.batch (WASMWebGPU, linked into a guest that imports "webgpu"):
+  // a JSPI suspending import. opts.webgpu is WASMWebGPU/js/webgpu-exec.js
+  // ({runBatch, writeReply}); the batch runs on this host's navigator.gpu
+  // and the guest is suspended while a WebGPU promise settles. Without JSPI
+  // or opts.webgpu the import answers -1 and the guest reports no WebGPU.
+  let suspends = false;
+  const gpuImport = WebAssembly.Module.imports(mod).some((i) => i.module === "webgpu" && i.name === "batch");
+  if (gpuImport) {
+    const jspi = typeof WebAssembly.Suspending === "function" && typeof WebAssembly.promising === "function";
+    if (jspi && opts.webgpu) {
+      const gpu = opts.webgpu;
+      imports.webgpu.batch = new WebAssembly.Suspending((req, len, outPtr, cap) => {
+        const m = wasi.inst.exports.memory;
+        const answer = (reply) => gpu.writeReply(reply, new Uint8Array(m.buffer, outPtr >>> 0, cap >>> 0));
+        let reply;
+        try {
+          reply = gpu.runBatch(new Uint8Array(m.buffer, req >>> 0, len >>> 0));
+        } catch (e) {
+          return answer({ text: "error=webgpu batch: " + (e && e.message ? e.message : String(e)), bin: null });
+        }
+        return reply && typeof reply.then === "function" ? reply.then(answer) : answer(reply);
+      });
+      suspends = true;
+    } else {
+      imports.webgpu.batch = () => -1;
+    }
+  }
   const instance = await WebAssembly.instantiate(mod, imports);
   wasi.inst.exports = instance.exports;
-  return { module: mod, instance, exports: instance.exports, ExitError };
+  return { module: mod, instance, exports: instance.exports, ExitError, suspends };
+}
+
+// A guest with a suspending import runs through WebAssembly.promising, so
+// it can suspend; the others are called directly.
+async function enter(loaded, fn, args) {
+  if (loaded.suspends) return WebAssembly.promising(fn)(...(args || []));
+  return fn(...(args || []));
 }
 
 export async function run(loaded) {
   const exp = loaded.exports || loaded.instance.exports;
   try {
     if (typeof exp._start === "function") {
-      exp._start();
+      await enter(loaded, exp._start);
       return 0;
     }
     const names = Object.keys(exp);
@@ -900,7 +1069,7 @@ export async function run(loaded) {
       const n = names[i];
       if (typeof exp[n] !== "function") continue;
       if (n === "run" || n.indexOf("#run") >= 0) {
-        const got = exp[n]();
+        const got = await enter(loaded, exp[n]);
         return got | 0;
       }
     }
@@ -916,7 +1085,7 @@ export async function call(loaded, name, args) {
   if (typeof fn !== "function") throw new Error("unknown export " + name);
   const a = (args || []).map((x) => x | 0);
   try {
-    const got = fn(...a);
+    const got = await enter(loaded, fn, a);
     return got;
   } catch (e) {
     if (e && (e.name === "ExitError" || typeof e.code === "number")) return e.code | 0;

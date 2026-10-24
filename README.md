@@ -203,6 +203,8 @@ Product-facing programs under `examples/` (stdlib goldens stay one-package-per-d
 | `ogchan` | Open Graph document channel |
 | `liveviewpkg` | LiveView language: HTML+CSS+JS-events+templates as one `live` document |
 | `websocketpkg` | gorilla/websocket port (RFC 6455 frames, Upgrader, Dialer) |
+| `webgpupkg` | WGSL compute on the host's WebGPU through `import "webgpu"` (WASMWebGPU) |
+| `bitnet` | BitNet b1.58 LLM inference: packed safetensors, WGSL W1.58A8 kernels, chat page ([README](examples/bitnet/README.md)) |
 
 ---
 

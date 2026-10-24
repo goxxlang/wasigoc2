@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wasigocvm guest</title>
+<style>
+  :root { --bg: #0f1210; --fg: #d6e2d8; --dim: #7d8b80; --err: #ff8a80; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+  header { padding: 12px 16px; color: var(--dim); border-bottom: 1px solid #243028; }
+  pre { margin: 0; padding: 12px 16px; white-space: pre-wrap; word-break: break-word; }
+  .err { color: var(--err); }
+</style>
+</head>
+<body>
+<header id="status">loading</header>
+<pre id="out"></pre>
+<script type="module">
+// Runs one wasigocvm guest in guest-worker.js and shows what it prints.
+//   gpu.html?wasm=/mnt/x/prog.wasm&arg=a&arg=b
+// The guest gets WebGPU (import "webgpu") when the browser has WebGPU and JSPI.
+const q = new URLSearchParams(location.search);
+const wasm = q.get("wasm");
+const out = document.getElementById("out");
+const status = document.getElementById("status");
+const put = (text, cls) => {
+  const s = document.createElement("span");
+  if (cls) s.className = cls;
+  s.textContent = text;
+  out.appendChild(s);
+};
+if (!wasm) {
+  status.textContent = "usage: gpu.html?wasm=<url of a wasigocvm .wasm>[&arg=...]";
+} else {
+  status.textContent = wasm + " running";
+  const w = new Worker("guest-worker.js", { type: "module" });
+  w.onmessage = (e) => {
+    const m = e.data || {};
+    if (m.type === "worker-ready") {
+      const name = wasm.slice(wasm.lastIndexOf("/") + 1);
+      w.postMessage({ type: "boot", wasm, args: [name, ...q.getAll("arg")] });
+    } else if (m.type === "out") put(m.text);
+    else if (m.type === "err") put(m.text, "err");
+    else if (m.type === "exit") {
+      status.textContent = wasm + " exited " + m.code;
+      document.title = "exit " + m.code;
+    }
+  };
+  w.onerror = (e) => put((e.message || "worker error") + "\n", "err");
+}
+</script>
+</body>
+</html>

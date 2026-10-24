@@ -50,6 +50,8 @@ inline std::string gocdesk_present(const char* pass) {
   s += "\x1f";
   s += "gpu=gocdesk";
   s += "\x1f";
+  s += "engine=DesktopEngine";
+  s += "\x1f";
   s += "swapchain=webgpu";
   s += "\x1f";
   s += "ui=FlushUI";

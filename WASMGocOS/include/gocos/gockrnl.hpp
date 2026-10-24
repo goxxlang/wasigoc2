@@ -51,7 +51,7 @@ inline std::string gockrnl_status() {
   s += "desk=";
   s += k.desk;
   s += "\x1f";
-  s += "gpu=gocdesk";
+  s += "ns=plan9";
   s += "\x1f";
   s += "nix=";
   s += k.nix;
@@ -74,11 +74,33 @@ inline std::string gockrnl_close(const char* a) {
   return hv::k32("CloseHandle", a ? a : "");
 }
 
+#if defined(WASMGOCOS_HAS_JITRT)
+struct GocProc {
+  uint32_t pid = 0;
+  int exit_code = 0;
+  uint32_t viewer = 0;
+  int job = 0;
+  std::string output;
+  std::string error;
+};
+
+// CreateProcessW, then seat the child on the process table. When `wait`
+// is set, the child's output is the session console and the reply.
+GocProc goc_launch(const char* args, bool wait);
+#endif
+
 inline std::string gockrnl_create_process(const char* image, const char* cmdline,
                                          bool wait) {
   std::string args = image ? image : "";
   args += '\x1f';
   args += (cmdline && cmdline[0]) ? cmdline : (image ? image : "");
+#if defined(WASMGOCOS_HAS_JITRT)
+  GocProc launched = goc_launch(args.c_str(), wait);
+  if (!launched.error.empty()) return launched.error;
+  gockrnl().errorlevel = launched.exit_code;
+  if (!wait) return std::to_string(launched.pid);
+  return launched.output;
+#else
   std::string r = hv::k32("CreateProcessW", args.c_str());
   if (r.rfind("error:", 0) == 0) return r;
   std::string pid, rest, h;
@@ -93,6 +115,7 @@ inline std::string gockrnl_create_process(const char* image, const char* cmdline
   if (code.rfind("error:", 0) != 0)
     gockrnl().errorlevel = static_cast<int>(std::strtol(code.c_str(), nullptr, 10));
   return out;
+#endif
 }
 
 inline std::string gockrnl_open_process(const char* a) {

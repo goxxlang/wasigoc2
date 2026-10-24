@@ -1,4 +1,5 @@
-// Tiny subset of math, implemented in Go (Sqrt is Newton).
+// Tiny subset of math, implemented in Go (Sqrt is Newton; the Float*bits
+// pairs scale by exact powers of two).
 package math
 
 func Abs(x float64) float64 {
@@ -211,4 +212,140 @@ func Pow(x float64, y float64) float64 {
 
 func Hypot(p float64, q float64) float64 {
 	return Sqrt(p*p + q*q)
+}
+
+// pow2 is 2**k, exact for k in [-1074, 1023]: squaring 2 or 1/2 only ever
+// makes powers of two, and every one in that range is a float64.
+func pow2(k int) float64 {
+	b := 2.0
+	if k < 0 {
+		b = 0.5
+		k = -k
+	}
+	r := 1.0
+	for k > 0 {
+		if k&1 == 1 {
+			r = r * b
+		}
+		b = b * b
+		k = k >> 1
+	}
+	return r
+}
+
+// normal splits a > 0 (a normal float64) into f in [1, 2) and e with
+// a = f * 2**e. Dividing by a power of two is exact.
+func normal(a float64) (float64, int) {
+	e := 0
+	if a >= 2 {
+		for s := 512; s >= 1; s = s >> 1 {
+			if a >= pow2(s) {
+				a = a / pow2(s)
+				e += s
+			}
+		}
+	} else if a < 1 {
+		for s := 512; s >= 1; s = s >> 1 {
+			if a < pow2(1-s) {
+				a = a * pow2(s)
+				e -= s
+			}
+		}
+	}
+	return a, e
+}
+
+// Float32bits is the IEEE 754 binary32 encoding of f.
+func Float32bits(f float32) uint32 {
+	if f != f {
+		return 0x7fc00000
+	}
+	var sign uint32
+	z := float32(0)
+	if f < 0 || (f == 0 && 1/f < z) {
+		sign = 0x80000000
+		f = -f
+	}
+	if f == 0 {
+		return sign
+	}
+	a := float64(f)
+	if a > 3.4028234663852886e+38 {
+		return sign | 0x7f800000
+	}
+	if a < pow2(-126) {
+		return sign | uint32(a*pow2(149))
+	}
+	m, e := normal(a)
+	return sign | uint32(e+127)<<23 | uint32((m-1)*pow2(23))
+}
+
+// Float32frombits is the float32 whose IEEE 754 binary32 encoding is b.
+func Float32frombits(b uint32) float32 {
+	exp := int(b>>23) & 0xff
+	mant := b & 0x7fffff
+	var v float64
+	if exp == 0xff {
+		if mant != 0 {
+			return float32(NaN())
+		}
+		v = Inf(1)
+	} else if exp == 0 {
+		v = float64(mant) * pow2(-149)
+	} else {
+		v = float64(mant|0x800000) * pow2(exp-150)
+	}
+	if b&0x80000000 != 0 {
+		v = -v
+		if v == 0 {
+			z := 0.0
+			return float32(-z)
+		}
+	}
+	return float32(v)
+}
+
+// Float64bits is the IEEE 754 binary64 encoding of f.
+func Float64bits(f float64) uint64 {
+	if f != f {
+		return 0x7ff8000000000001
+	}
+	var sign uint64
+	z := 0.0
+	if f < 0 || (f == 0 && 1/f < z) {
+		sign = 0x8000000000000000
+		f = -f
+	}
+	if f == 0 {
+		return sign
+	}
+	if f > MaxFloat64 {
+		return sign | 0x7ff0000000000000
+	}
+	if f < pow2(-1022) {
+		return sign | uint64(f*pow2(1074))
+	}
+	m, e := normal(f)
+	return sign | uint64(e+1023)<<52 | uint64((m-1)*pow2(52))
+}
+
+// Float64frombits is the float64 whose IEEE 754 binary64 encoding is b.
+func Float64frombits(b uint64) float64 {
+	exp := int(b>>52) & 0x7ff
+	mant := b & 0xfffffffffffff
+	var v float64
+	if exp == 0x7ff {
+		if mant != 0 {
+			return NaN()
+		}
+		v = Inf(1)
+	} else if exp == 0 {
+		v = float64(mant) * pow2(-1074)
+	} else {
+		v = float64(mant|0x10000000000000) * pow2(exp-1075)
+	}
+	if b>>63 != 0 {
+		return -v
+	}
+	return v
 }

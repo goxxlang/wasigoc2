@@ -28,6 +28,15 @@ extern "C" __attribute__((weak)) pid_t getppid(void) {
 extern "C" __attribute__((weak)) long gocvm_gettid(void) {
   return static_cast<long>(gocvm::proc_tid());
 }
+#if defined(WASIGO_HAS_WASMREACT) && WASIGO_HAS_WASMREACT
+// WASMReact's lxss reads /mnt, /host, ... through the page's share. HeapVM
+// defines it (device_call.cc, heap.share); a plain module has no share
+// host, and lxss reports the share as unavailable.
+extern "C" __attribute__((weak)) int32_t heap_share_text(int, const char*, char* out, unsigned cap) {
+  if (out && cap) out[0] = 0;
+  return -1;
+}
+#endif
 #endif
 
 #define WASMWIN32_WASI_HOST_NO_POSIX_HEADERS 1
@@ -42,6 +51,9 @@ extern "C" __attribute__((weak)) long gocvm_gettid(void) {
 #if defined(WASIGO_HAS_WASMCHROME) && WASIGO_HAS_WASMCHROME
 #include "chrome/host.hpp"
 #include "chrome/catalog.h"
+#endif
+#if defined(WASIGO_HAS_WEBGPU) && WASIGO_HAS_WEBGPU
+#include "webgpu/catalog.h"
 #endif
 #if defined(WASIGO_HAS_WASMREACT) && WASIGO_HAS_WASMREACT
 #include "reactos/catalog.h"
@@ -873,6 +885,25 @@ inline bool wasigocvm_try_chrome(const std::string& topic, const std::string& pa
 #endif
 }
 
+// WASMWebGPU (linked when the program imports "webgpu"): the host's WebGPU
+// as a compute device. `rest` may be binary (Write, Run), so it is passed
+// as a std::string, not a C string.
+inline bool wasigocvm_try_webgpu(const std::string& topic, const std::string& payload,
+                                 std::string* reply) {
+#if defined(WASIGO_HAS_WEBGPU) && WASIGO_HAS_WEBGPU
+  if (topic != "webgpu") return false;
+  std::string api, rest;
+  wasigocvm_split1f(payload, &api, &rest);
+  *reply = wasmwebgpu::webgpu_call(api, rest);
+  return true;
+#else
+  (void)topic;
+  (void)payload;
+  (void)reply;
+  return false;
+#endif
+}
+
 // wasigocvm.bat links ~/WASMTurboSpace host-calls.cc, which defines
 // these. Weak so a module built without that link still compiles; the
 // topic then answers an error.
@@ -1043,6 +1074,7 @@ inline bool wasigocvm_try_libc(const std::string& topic, const std::string& payl
   if (wasigocvm_try_desktopengine(topic, payload, reply)) return true;
   if (wasigocvm_try_gocos(topic, payload, reply)) return true;
   if (wasigocvm_try_chrome(topic, payload, reply)) return true;
+  if (wasigocvm_try_webgpu(topic, payload, reply)) return true;
   if (wasigocvm_try_reactos(topic, payload, reply)) return true;
   return wasigocvm_try_any_catalog(topic, payload, reply);
 }

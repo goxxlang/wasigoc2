@@ -51,6 +51,14 @@ inline void goc_page_drop(const char* addr) {
 inline std::string goc_alloc(const char* a) {
   unsigned n = a && a[0] ? static_cast<unsigned>(std::strtoul(a, nullptr, 10)) : 0;
   if (!n) n = 4096;
+  if (hv::vcpu_attached()) {
+    char gpa[32];
+    gpa[0] = 0;
+    if (wasmturbo_vcpu_map(n, gpa, sizeof(gpa)) == 0 && gpa[0]) {
+      goc_page_add(gpa, n);
+      return gpa;
+    }
+  }
   std::string p = hv::k32("VirtualAlloc", std::to_string(n).c_str());
   if (p.rfind("error:", 0) == 0) {
     std::string nt = join1f("-1", std::to_string(n).c_str());
@@ -62,6 +70,10 @@ inline std::string goc_alloc(const char* a) {
 
 inline std::string goc_free(const char* a) {
   if (!a || !a[0]) return err_msg("GocKrnl.Free: empty address");
+  if (hv::vcpu_attached() && wasmturbo_vcpu_unmap(a) == 0) {
+    goc_page_drop(a);
+    return "ok";
+  }
   std::string r = hv::k32("VirtualFree", a);
   if (r.rfind("error:", 0) == 0) r = hv::k32("NtFreeVirtualMemory", a);
   goc_page_drop(a);

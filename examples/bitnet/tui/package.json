@@ -1,0 +1,9 @@
+{
+  "name": "hodge-tui",
+  "private": true,
+  "type": "module",
+  "description": "Terminal chat for a Hodge pack. The guest is bitnet.wasm. The GPU is Dawn.",
+  "dependencies": {
+    "webgpu": "0.6.2"
+  }
+}

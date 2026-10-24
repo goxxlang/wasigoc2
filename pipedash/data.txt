@@ -1,0 +1,93 @@
+now	1791556014	2026-10-09 10:26:54
+line	declut	/home/grego/declut_runs/dl1
+line	ramgen	/home/grego/ramgen_runs
+sel_line	declut
+run	s10	running	10-09 10:26
+run	s9	fail	10-09 06:40
+run	s8	fail	10-09 05:13
+run	s7	stopped	10-08 23:17
+run	s6	fail	10-08 19:31
+run	s5	fail	10-08 18:38
+run	s4	fail	10-08 14:22
+run	s3	fail	10-08 13:15
+run	s2	fail	10-08 12:07
+run	s1	stopped	10-08 11:52
+sel	s10	running	/home/grego/declut_runs/dl1/s10
+seeded	seeded from /home/grego/declut_runs/dl1/s7: 66 files copied 2026-10-09T06:44:39-04:00
+playbook	/mnt/c/Users/grego/WASMAgentDispatch/examples/declut.playbook.json
+proven	/mnt/c/Users/grego/WASMApollo/pnr/flow
+pipeline	pipeline declut-dl1s-from-floorplan: 10 jobs, run /home/grego/declut_runs/dl1/s10
+stage	lint	seed	0		
+stage	golden	seed	0		
+stage	spec	seed	0		
+stage	stimulus	seed	0		
+stage	equiv	seed	0		
+stage	synth	seed	0		
+stage	gls	seed	0		
+stage	prerun	seed	0		
+stage	floorplan	pass	13	06:44:39	06:44:53
+stage	place	pass	2402	06:44:53	07:24:55
+stage	cts	pass	887	07:24:55	07:39:43
+stage	route	run	10031	07:39:43	
+stage	finish	wait	0		
+stage	gds	wait	0		
+stage	drc	wait	0		
+stage	lvs	wait	0		
+stage	report	wait	0		
+vmetric	floorplan	chipset	sky130A
+vmetric	floorplan	die_um	2188.68 2197.76
+vmetric	floorplan	floorplan.unplaced_pins	0
+vmetric	floorplan	seconds	13
+vmetric	place	chipset	sky130A
+vmetric	place	seconds	2402
+vmetric	cts	chipset	sky130A
+vmetric	cts	cts.hold_ws	0.08
+vmetric	cts	cts.setup_ws	0.04
+vmetric	cts	seconds	887
+metric	floorplan.die	2188.68 2197.76
+metric	floorplan.unplaced_pins	0
+metric	place.setup_ws	-18.40
+metric	place.hold_ws	0.03
+metric	place.drv.limits	10/0.75/0.2
+metric	place.drv.fanout	0
+metric	place.drv.slew	0
+metric	place.drv.cap	0
+metric	cts.setup_ws	0.04
+metric	cts.hold_ws	0.08
+metric	cts.drv.limits	10/0.75/0.2
+metric	cts.drv.fanout	0
+metric	cts.drv.slew	4
+metric	cts.drv.cap	1
+monitor	10:26:41 monitor route 2h46m58s mem 9.9GB tools[openroad:394048] | == declut_core/s10: grt  (07:39:43)
+flowlog	grt.log	10:21:57
+flowline	[INFO GRT-0102] Start extra iteration 38/50
+flowline	[INFO GRT-0102] Start extra iteration 39/50
+flowline	[INFO GRT-0102] Start extra iteration 40/50
+flowline	[INFO GRT-0102] Start extra iteration 41/50
+flowline	[INFO GRT-0102] Start extra iteration 42/50
+flowline	[INFO GRT-0102] Start extra iteration 43/50
+flowline	[INFO GRT-0102] Start extra iteration 44/50
+flowline	[INFO GRT-0102] Start extra iteration 45/50
+event	06:44:39 pipeline declut-dl1s-from-floorplan: 10 jobs, run /home/grego/declut_runs/dl1/s10
+event	06:44:39 step floorplan: start
+event	06:44:53 step floorplan: PASS in 13s {"chipset":"sky130A","die_um":"2188.68 2197.76","floorplan.unplaced_pins":0,"seconds":13}
+event	06:44:53 step place: start
+event	07:24:55 step place: PASS in 2402s {"chipset":"sky130A","seconds":2402}
+event	07:24:55 step cts: start
+event	07:39:43 step cts: PASS in 887s {"chipset":"sky130A","cts.hold_ws":0.08,"cts.setup_ws":0.04,"seconds":887}
+event	07:39:43 step route: start
+lesson	calibration failure_kind: 7 labeled, accuracy 86%, Brier 0.251 (0 perfect, uniform guess 0.833)
+lesson	calibration resume_step: 7 labeled, accuracy 71%, Brier 0.531 (0 perfect, uniform guess 0.923)
+lesson	signature "DRC marker count disagrees with the router": right 1 of 1 fired
+lesson	signature "DRV: antenna diodes on violating nets": right 1 of 1 fired
+lesson	signature "DRV: clock-tree root driver slew": right 1 of 1 fired
+lesson	signature "Tcl / command error": right 2 of 2 fired
+lesson	signature "antenna repair converging, out of rounds": right 1 of 1 fired
+lesson	signature "script error (Python / shell)": right 1 of 1 fired
+lesson	signature "slew / cap / fanout over the prerun contract": right 0 of 2 fired
+lesson	signature "test harness ran nothing": right 1 of 1 fired
+lesson	signature "tool configuration error": right 1 of 1 fired
+lesson	signature "tool crash (segfault)": right 1 of 1 fired
+lesson	lessons: 2 queued
+lesson	REWEIGHT s8 route: said design (p=0.86), truth [flow_bug] -- ran on ORFS, not the proven pnr/flow: ORFS does no design repair after global route to the prerun contract (12 fanout / 28 slew / 11 cap); pnr/flow grt.tcl repairs there. Rerun on pnr/flow from floorplan.
+lesson	RESUME s9 place: said place, the fix resumed at floorplan -- declut/pnr/pins.cfg named rst_n, netlist port is rst; floorplan warned, GPL-0326 stopped placement. Fixed pins.cfg; floorplan gate floorplan.unplaced_pins; signature top-level port not placed.

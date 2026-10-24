@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Weight host</title>
+</head>
+<body>
+<p id="status">Starting</p>
+<script type="module">
+import { startHost } from "./bnzshare.js";
+// The one model, in its one room: nothing in this page's URL chooses either.
+const url = new URL("/models/champ/model.bnz", location.href).href;
+const room = "champ";
+const status = document.getElementById("status");
+startHost({
+  url,
+  room,
+  onStatus: (t) => { status.textContent = room + ": " + t; },
+});
+</script>
+</body>
+</html>

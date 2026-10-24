@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pipelines</title>
+  <style>
+    html, body { margin: 0; background: #0c0d10; color: #e4e0d6; }
+    @media (prefers-color-scheme: light) { html, body { background: #fff; color: #141414; } }
+    p#boot { font: 14px Arial, sans-serif; letter-spacing: 0.08em; padding: 28px; }
+  </style>
+  <style id="dash-css"></style>
+</head>
+<body>
+  <div id="root"><p id="boot">Loading the module.</p></div>
+  <script type="module">
+    // The go++ module (guikit GML on an rmlui tree) writes the page; this
+    // script only feeds it the pack (mast, dash, css, data) and swaps the
+    // body in. data comes from the server, which reads the run directories.
+    import { compileGuest, instantiate, run } from "./loader.js?v=2";
+
+    const root = document.getElementById("root");
+    const utf8 = new TextEncoder();
+    const params = new URLSearchParams(location.search);
+    const dataURL = "data?line=" + encodeURIComponent(params.get("line") || "") +
+      "&tag=" + encodeURIComponent(params.get("tag") || "");
+
+    async function text(url) {
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) throw new Error(url + " " + r.status);
+      return r.text();
+    }
+    function pack(name, body) {
+      const bytes = utf8.encode(body);
+      const head = utf8.encode(name + "\n" + bytes.length + "\n");
+      const out = new Uint8Array(head.length + bytes.length);
+      out.set(head, 0);
+      out.set(bytes, head.length);
+      return out;
+    }
+    function concat(parts) {
+      let n = 0;
+      for (const p of parts) n += p.length;
+      const out = new Uint8Array(n);
+      let o = 0;
+      for (const p of parts) { out.set(p, o); o += p.length; }
+      return out;
+    }
+
+    let mod, mast, dash, css;
+    function chipHref(data) {
+      for (const line of data.split("\n")) {
+        if (line.startsWith("chipview\t")) return line.slice("chipview\t".length);
+      }
+      return "";
+    }
+    // The module rewrites #root on each refresh. Keep the same iframe node
+    // so a refresh does not reload the viewer.
+    function mountChipview(href) {
+      const held = document.getElementById("chipview-pane");
+      if (held) held.remove();
+      const run = document.querySelector("#root section.run");
+      if (!run || !href) return;
+      const mast = document.querySelector("#root header.top");
+      if (mast) {
+        document.documentElement.style.setProperty("--mast-h", Math.ceil(mast.getBoundingClientRect().height) + "px");
+      }
+      let pane = held;
+      let frame = pane && pane.querySelector("iframe");
+      if (!pane || !frame || frame.getAttribute("src") !== href) {
+        pane = document.createElement("section");
+        pane.id = "chipview-pane";
+        pane.className = "chipview-pane";
+        frame = document.createElement("iframe");
+        frame.id = "chipview-frame";
+        frame.title = "Chipview";
+        frame.src = href;
+        pane.append(frame);
+      }
+      run.insertBefore(pane, run.firstChild);
+    }
+    async function frame() {
+      const data = await text(dataURL);
+      const href = chipHref(data);
+      const stdin = concat([pack("mast", mast), pack("dash", dash), pack("css", css), pack("data", data)]);
+      let html = "";
+      const loaded = await instantiate(mod, {
+        args: ["pipedash.wasm"],
+        stdin: stdin,
+        stdout: (t) => { html += t; },
+        stderr: (t) => { console.error(t); }
+      });
+      const code = await run(loaded);
+      if (!html) throw new Error("module wrote no page (exit " + code + ")");
+      const page = new DOMParser().parseFromString(html, "text/html");
+      document.title = page.title;
+      // keep the scroll of each feed, and the page, across refreshes
+      const y = window.scrollY;
+      const keep = {};
+      root.querySelectorAll("[id]").forEach((el) => { keep[el.id] = el.scrollTop; });
+      root.innerHTML = page.body.innerHTML;
+      for (const id in keep) {
+        const el = document.getElementById(id);
+        if (el) el.scrollTop = keep[id];
+      }
+      mountChipview(href);
+      window.scrollTo(0, y);
+    }
+
+    try {
+      [mod, mast, dash, css] = await Promise.all([
+        fetch("pipedash.wasm?v=1").then((r) => {
+          if (!r.ok) throw new Error("pipedash.wasm " + r.status);
+          return compileGuest(r);
+        }),
+        text("gml/mast.gml"),
+        text("gml/dash.gml"),
+        text("dash.css")
+      ]);
+      document.getElementById("dash-css").textContent = css;
+      await frame();
+      setInterval(() => { frame().catch((e) => console.error(e)); }, 20000);
+    } catch (err) {
+      root.innerHTML = "";
+      const p = document.createElement("p");
+      p.id = "boot";
+      p.textContent = err && err.message ? err.message : String(err);
+      root.appendChild(p);
+    }
+  </script>
+</body>
+</html>

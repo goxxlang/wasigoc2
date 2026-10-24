@@ -242,6 +242,16 @@ inline std::string distro_init(const std::string& name) {
          "mount -t tmpfs tmpfs /run\n"
          "mount -t tmpfs tmpfs /tmp\n"
          "hostname " + quoted + "\n"
+         // Bring the network up. The WSL2 kernel is built without
+         // CONFIG_IP_PNP, so the `ip=` command line does nothing and the
+         // interfaces are left down; configure them here to match that
+         // command line (guest 10.0.2.15/24, gateway/resolver 10.0.2.2,
+         // served by HeapVM's in-wasm NAT).
+         "ip link set lo up 2>/dev/null\n"
+         "ip link set eth0 up 2>/dev/null\n"
+         "ip addr add 10.0.2.15/24 dev eth0 2>/dev/null\n"
+         "ip route add default via 10.0.2.2 2>/dev/null\n"
+         "echo 'nameserver 10.0.2.2' > /etc/resolv.conf\n"
          "cd /root\n"
          "if command -v setsid >/dev/null; then setsid -c /bin/sh -l; else /bin/sh -l; fi\n"
          "sync\n"

@@ -2022,28 +2022,37 @@ inline Slice<int32_t> runes_from_string(const std::string& s) {
   return out;
 }
 
+// string(r) for an integer r: its UTF-8 encoding (U+FFFD for a surrogate
+// or a value past U+10FFFF), as Go defines the conversion.
+inline void append_rune(std::string& out, int64_t v) {
+  uint32_t r = (v < 0 || v > 0x10FFFF) ? 0xFFFD : static_cast<uint32_t>(v);
+  if (r >= 0xD800 && r <= 0xDFFF) r = 0xFFFD;
+  if (r < 0x80) {
+    out.push_back(static_cast<char>(r));
+  } else if (r < 0x800) {
+    out.push_back(static_cast<char>(0xC0 | (r >> 6)));
+    out.push_back(static_cast<char>(0x80 | (r & 0x3F)));
+  } else if (r < 0x10000) {
+    out.push_back(static_cast<char>(0xE0 | (r >> 12)));
+    out.push_back(static_cast<char>(0x80 | ((r >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (r & 0x3F)));
+  } else {
+    out.push_back(static_cast<char>(0xF0 | (r >> 18)));
+    out.push_back(static_cast<char>(0x80 | ((r >> 12) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | ((r >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (r & 0x3F)));
+  }
+}
+
+inline std::string string_from_rune(int64_t r) {
+  std::string out;
+  append_rune(out, r);
+  return out;
+}
+
 inline std::string string_from_runes(const Slice<int32_t>& rs) {
   std::string out;
-  for (int64_t i = 0; i < rs.len(); ++i) {
-    uint32_t r = static_cast<uint32_t>(rs[i]);
-    if (r < 0x80) {
-      out.push_back(static_cast<char>(r));
-    } else if (r < 0x800) {
-      out.push_back(static_cast<char>(0xC0 | (r >> 6)));
-      out.push_back(static_cast<char>(0x80 | (r & 0x3F)));
-    } else if (r < 0x10000) {
-      if (r >= 0xD800 && r <= 0xDFFF) r = 0xFFFD;
-      out.push_back(static_cast<char>(0xE0 | (r >> 12)));
-      out.push_back(static_cast<char>(0x80 | ((r >> 6) & 0x3F)));
-      out.push_back(static_cast<char>(0x80 | (r & 0x3F)));
-    } else {
-      if (r > 0x10FFFF) r = 0xFFFD;
-      out.push_back(static_cast<char>(0xF0 | (r >> 18)));
-      out.push_back(static_cast<char>(0x80 | ((r >> 12) & 0x3F)));
-      out.push_back(static_cast<char>(0x80 | ((r >> 6) & 0x3F)));
-      out.push_back(static_cast<char>(0x80 | (r & 0x3F)));
-    }
-  }
+  for (int64_t i = 0; i < rs.len(); ++i) append_rune(out, rs[i]);
   return out;
 }
 
@@ -2388,6 +2397,13 @@ void install_wasigocvm_net_bridge();
 #endif
 
 inline void set_os_args(int argc, char** argv) {
+  // Go's os.Stdout and os.Stderr are unbuffered: each fmt.Print is a write,
+  // so a prompt without a newline, or text streamed a token at a time, is
+  // seen as soon as it is printed.
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+  std::setvbuf(stderr, nullptr, _IONBF, 0);
+  std::cout.setf(std::ios::unitbuf);
+  std::cerr.setf(std::ios::unitbuf);
   auto& a = os_args_store();
   a = make_slice<std::string>(argc < 0 ? 0 : argc);
   for (int i = 0; i < argc; ++i) a[i] = argv[i] ? argv[i] : "";

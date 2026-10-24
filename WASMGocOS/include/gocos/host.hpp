@@ -1,14 +1,14 @@
 #ifndef WASMGOCOS_INCLUDE_GOCOS_HOST_HPP_
 #define WASMGOCOS_INCLUDE_GOCOS_HOST_HPP_
 
-// Edge kernel between the browser guest and the desktop. Guest binding
-// is gocvm.Call("gocos", …) on gocvm.wasm (wasigocvm).
+// Edge kernel. The guest binding is gocvm.Call("gocos", …). What the
+// guest is delivered is the Plan 9 namespace (fd, env, cons, jobs, sh),
+// and that namespace runs only across WASMNetStack.
 //
 //   GocKrnl  — kernel
 //   GocSys   — subsystem
-//   GocDesk  — GPU desktop
-//   GocNix   — WSL
-//   GocShell — console
+//   GocNix   — WSL occupancy
+//   Plan 9   — session namespace, on the net stack
 //
 // Every call is gocvm hypervision: k32 (~/WASMWin32) or nix (~/WASMNix).
 // Memory is the gocvm model (EPT vmem / VirtualAlloc / mmap).
@@ -26,12 +26,6 @@
 #include <cstring>
 #include <string>
 
-#if defined(__has_include)
-#  if __has_include("nix/wsl.hpp")
-#    include "nix/wsl.hpp"
-#    define WASMGOCOS_HAS_NIX 1
-#  endif
-#endif
 #if defined(__wasm__) || defined(__wasi__)
 #  if defined(__has_include)
 #    if __has_include("win32/wasi_host.hpp")
@@ -40,6 +34,14 @@
 #      endif
 #      include "win32/wasi_host.hpp"
 #      define WASMGOCOS_HAS_WIN32 1
+#    endif
+#    if __has_include("nix/wsl.hpp")
+#      include "nix/wsl.hpp"
+#      define WASMGOCOS_HAS_NIX 1
+#      define WASMGOCOS_NIX_WSL 1
+#    elif __has_include("nix/posix_host.hpp")
+#      include "nix/posix_host.hpp"
+#      define WASMGOCOS_HAS_NIX 1
 #    endif
 #  endif
 #elif defined(_WIN32)
@@ -59,12 +61,48 @@ namespace wasmgocos {
 #include "gocos/gocdesk.hpp"
 #include "gocos/gocshell.hpp"
 
+#if defined(WASMGOCOS_HAS_JITRT)
+std::string jit_pid();
+std::string jit_share();
+std::string jit_run(const char* path);
+std::string jit_unil();
+std::string jit_file(const char* args);
+std::string jit_mss();
+std::string jit_heap(const char* args);
+std::string jit_procfs(const char* args);
+std::string jit_proctable(const char* args);
+std::string jit_service(const char* args);
+std::string jit_vfs(const char* args);
+std::string jit_bbx(const char* args);
+std::string jit_fd(const char* args);
+std::string jit_env(const char* args);
+std::string jit_sh(const char* line);
+std::string jit_jobs(const char* args);
+std::string jit_status(const char* args);
+std::string jit_ctr(const char* args);
+std::string jit_svc(const char* args);
+std::string jit_react(const char* args);
+std::string jit_dll(const char* args);
+#if defined(WASMGOCOS_HAS_NET)
+std::string jit_bio(const char* args);
+std::string jit_net(const char* args);
+#endif
+#endif
+
+bool plan9_local();
+std::string plan9_hop(const char* verb, const char* args);
+
 inline std::string gockrnl_boot() {
   GocKrnl& k = gockrnl();
   if (k.booted) return gockrnl_status();
   copy_field(k.hvname, sizeof(k.hvname), hv::name());
   copy_field(k.title, sizeof(k.title), "GocOS");
   copy_field(k.cwd, sizeof(k.cwd), "C:\\");
+
+  // The session is the delivery. It does not come up without the stack.
+  std::string ns = plan9_hop("fd", "");
+  if (ns.rfind("error:", 0) == 0) return ns;
+  copy_field(k.desk, sizeof(k.desk), "plan9");
 
   if (!hv::has_k32()) {
     copy_field(k.pid, sizeof(k.pid), "unbound");
@@ -75,7 +113,6 @@ inline std::string gockrnl_boot() {
     copy_field(k.k32mod, sizeof(k.k32mod), "unbound");
     copy_field(k.user32, sizeof(k.user32), "unbound");
     copy_field(k.gdi32, sizeof(k.gdi32), "unbound");
-    copy_field(k.desk, sizeof(k.desk), "unbound");
     if (hv::has_nix()) {
       std::string u = hv::nix("uname", "");
       if (u.rfind("error:", 0) != 0) copy_field(k.nix, sizeof(k.nix), u);
@@ -89,23 +126,15 @@ inline std::string gockrnl_boot() {
   copy_field(k.pid, sizeof(k.pid), pid);
 
   std::string ver = hv::k32("RtlGetVersion", "");
-  if (ver.rfind("error:", 0) == 0) return ver;
-  copy_field(k.version, sizeof(k.version), ver);
+  if (ver.rfind("error:", 0) != 0) copy_field(k.version, sizeof(k.version), ver);
 
   std::string sta = hv::k32("GetDesktopWindow", "");
   if (sta.rfind("error:", 0) == 0) return sta;
   copy_field(k.station, sizeof(k.station), "GocSta0");
   copy_field(k.session, sizeof(k.session), pid);
-  copy_field(k.desk, sizeof(k.desk), sta);
 
   std::string sys = gocsys_init();
   if (sys.rfind("error:", 0) == 0) return sys;
-
-  std::string hwnd = gocdesk_ensure_window();
-  if (hwnd.rfind("error:", 0) == 0) return hwnd;
-  copy_field(k.desk, sizeof(k.desk), hwnd);
-  std::string present = gocdesk_present("Boot");
-  if (present.rfind("error:", 0) == 0) return present;
 
   if (hv::has_nix()) {
     std::string u = hv::nix("uname", "");
@@ -122,7 +151,8 @@ inline std::string gockrnl_boot() {
 
 inline std::string gockrnl_halt() {
   GocKrnl& k = gockrnl();
-  if (k.desk[0] && std::strcmp(k.desk, "unbound") != 0)
+  if (k.desk[0] && std::strcmp(k.desk, "unbound") != 0 &&
+      std::strcmp(k.desk, "plan9") != 0)
     hv::k32("DestroyWindow", k.desk);
   GocDesk& d = gocdesk();
   d = GocDesk{};
@@ -158,7 +188,7 @@ inline std::string gocos_call(const char* api, const char* args) {
   if (!api || !api[0]) return err_msg("gocos needs an API name");
   const char* a = args ? args : "";
 
-  if (eq(api, "Boot") || eq(api, "GocOSBoot") || eq(api, "Test") ||
+  if (eq(api, "Boot") || eq(api, "GocOSBoot") || eq(api, "Occupancy") ||
       eq(api, "Init"))
     return gockrnl_boot();
   if (eq(api, "Halt") || eq(api, "GocOSHalt")) return gockrnl_halt();
@@ -174,6 +204,33 @@ inline std::string gocos_call(const char* api, const char* args) {
     if (b.rfind("error:", 0) == 0) return b;
     return gockrnl_version();
   }
+#if defined(WASMGOCOS_HAS_JITRT)
+  if (eq(api, "JitPid")) return jit_pid();
+  if (eq(api, "JitShare")) return jit_share();
+  if (eq(api, "JitRun")) return jit_run(a);
+  if (eq(api, "JitUnil")) return jit_unil();
+  if (eq(api, "JitFile")) return jit_file(a);
+  if (eq(api, "JitMss")) return jit_mss();
+  if (eq(api, "Heap")) return jit_heap(a);
+  if (eq(api, "ProcFs")) return jit_procfs(a);
+  if (eq(api, "ProcTable")) return jit_proctable(a);
+  if (eq(api, "Service")) return jit_service(a);
+  if (eq(api, "Vfs")) return jit_vfs(a);
+  if (eq(api, "Bbx")) return jit_bbx(a);
+  if (eq(api, "Fd")) return jit_fd(a);
+  if (eq(api, "Env")) return jit_env(a);
+  if (eq(api, "Sh")) return jit_sh(a);
+  if (eq(api, "Jobs")) return jit_jobs(a);
+  if (eq(api, "Rc")) return jit_status(a);
+  if (eq(api, "Ctr")) return jit_ctr(a);
+  if (eq(api, "Svc")) return jit_svc(a);
+  if (eq(api, "React")) return jit_react(a);
+  if (eq(api, "JitDll")) return jit_dll(a);
+#if defined(WASMGOCOS_HAS_NET)
+  if (eq(api, "Bio")) return jit_bio(a);
+  if (eq(api, "Net")) return jit_net(a);
+#endif
+#endif
 
   if (eq(api, "CreateProcess") || eq(api, "NtCreateProcess") ||
       eq(api, "NtCreateProcessEx") || eq(api, "NtCreateUserProcess"))
@@ -288,6 +345,14 @@ inline std::string gocos_call(const char* api, const char* args) {
     return gocshell_conhost();
   }
   if (eq(api, "Prompt") || eq(api, "GetPrompt")) return gocshell_prompt();
+  // Interactive console: raw input bytes in, display bytes out. The terminal
+  // (echo, line editing, prompt, dispatch) is here in the module. The first
+  // call boots and primes the banner + prompt.
+  if (eq(api, "Console")) {
+    std::string b = gockrnl_boot();
+    if (b.rfind("error:", 0) == 0) return b;
+    return gocshell_console(a);
+  }
   if (eq(api, "Shell")) return gockrnl().shell == 1 ? "pwsh" : "cmd";
   if (eq(api, "CmdExample")) {
     gockrnl().shell = 0;

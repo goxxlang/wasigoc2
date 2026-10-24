@@ -56,8 +56,52 @@ GO_BASE="$(basename "$GO_ABS" .go)"
 GENCPP="$GO_DIR/${GO_BASE}_gen.cpp"
 OUTWASM="${OUTWASM:-$GO_DIR/${GO_BASE}.wasm}"
 
+# WASMReact (ReactOS kernel) and WASMProcess, when the siblings are there.
+# Found before wasigoc runs so `import "reactos"` resolves.
+REACT_ROOT=""
+REACT_IPT=""
+WPR_ROOT=""
+for d in "${HOME}/WASMReact" "$ROOT/../WASMReact"; do
+  [[ -f "$d/include/reactos/dispatch.h" ]] && { REACT_ROOT="$d"; break; }
+done
+if [[ -f "${HOME}/WASMVoodooCompile/WASMSafeSpace/src/sandbox/indirect-pointer-table.cc" ]]; then
+  REACT_IPT="${HOME}/WASMVoodooCompile/WASMSafeSpace"
+fi
+for d in "${HOME}/WASMProcess" "$ROOT/../WASMProcess"; do
+  [[ -f "$d/include/wpr/processes.h" ]] && { WPR_ROOT="$d"; break; }
+done
+REACT_I=()
+REACT_D=()
+REACT_CC=()
+if [[ -n "$REACT_ROOT" && -n "$REACT_IPT" && -n "$WPR_ROOT" ]]; then
+  REACT_I=(-I "$REACT_ROOT/include" -I "$REACT_IPT" -I "$WPR_ROOT/include" -I "$WPR_ROOT/src")
+  REACT_D=(-DWASIGO_HAS_WASMREACT=1)
+  REACT_CC=("$REACT_ROOT/src/unity.cc" "$REACT_IPT/src/sandbox/indirect-pointer-table.cc" "$REACT_ROOT/src/ps/drvfs.cc")
+  EXTRA+=(--import-dir="$REACT_ROOT/go")
+  echo "[wasigocvm] WASMReact ReactOS kernel on EPT/TPT/CHPT/IPT"
+fi
+
+# WASMWebGPU links only into a program that imports "webgpu": wasigoc
+# writes stdlib_webgpu_gen.hpp then. A stale one from an earlier build
+# must not count, so it goes first.
+rm -f "$GO_DIR/stdlib_webgpu_gen.hpp"
+
 echo "[wasigoc] $GO_ABS"
 "$WASIGOC" "$GO_ABS" -o "$GENCPP" --out-dir "$GO_DIR" "${EXTRA[@]+"${EXTRA[@]}"}"
+
+WEBGPU_I=()
+WEBGPU_D=()
+WEBGPU_CC=()
+if [[ -f "$GO_DIR/stdlib_webgpu_gen.hpp" ]]; then
+  if [[ ! -f "$ROOT/WASMWebGPU/src/catalog.cc" ]]; then
+    echo "error: this program imports webgpu but WASMWebGPU/ is missing" >&2
+    exit 1
+  fi
+  WEBGPU_I=(-I "$ROOT/WASMWebGPU/include")
+  WEBGPU_D=(-DWASIGO_HAS_WEBGPU=1)
+  WEBGPU_CC=("$ROOT/WASMWebGPU/src/catalog.cc" "$ROOT/WASMWebGPU/src/remote.cc")
+  echo "            -I $ROOT/WASMWebGPU/include (webgpu catalog: import webgpu.batch)"
+fi
 
 # --- toolchain resolve ---
 SYSROOT=""
@@ -149,8 +193,8 @@ if [[ -f "$ROOT/WASMNix/include/nix/posix_host.hpp" ]]; then
   NIX_I=(-I "$ROOT/WASMNix/include")
   echo "[wasigocvm] WASMNix libc host"
   if [[ -f "$ROOT/WASMNix/src/catalog.cc" ]]; then
-    NIX_CC=("$ROOT/WASMNix/src/catalog.cc")
-    echo "[wasigocvm] WASMNix catalog on EPT (CHPT session)"
+    NIX_CC=("$ROOT/WASMNix/src/catalog.cc" "$ROOT/WASMNix/src/call.cc" "$ROOT/WASMNix/src/cage_wsl.cc")
+    echo "[wasigocvm] WASMNix catalog on EPT (CHPT session, WSL, in-cage hop)"
   fi
 fi
 
@@ -177,20 +221,65 @@ if [[ ${#DROID_I[@]} -eq 0 ]]; then
   exit 2
 fi
 
-GOCOS_I=()
-GOCOS_CC=()
-if [[ -f "$ROOT/WASMGocOS/include/gocos/host.hpp" ]]; then
-  GOCOS_I=(-I "$ROOT/WASMGocOS/include")
-  echo "[wasigocvm] WASMGocOS edge kernel"
-  if [[ -f "$ROOT/WASMGocOS/src/catalog.cc" ]]; then
-    GOCOS_CC=("$ROOT/WASMGocOS/src/catalog.cc")
-    echo "[wasigocvm] WASMGocOS catalog on EPT (CHPT session, GocDesk)"
-  fi
-fi
-if [[ ${#GOCOS_I[@]} -eq 0 ]]; then
-  echo "error: wasigocvm requires WASMGocOS/ in this repo (gocos/host.hpp)" >&2
+# WASMGocOS and WASMNetStack are in this repo (the canonical trees).
+# GocKrnl boots over the Plan 9 session, so the kernel links whole: the
+# module set of WASMGocOS's own wasigocvm build (its CMakeLists.txt), with
+# goclibc still the host's (no GOCLIBC_IN_KERNEL). The vCPU is the software
+# WHv processor (src/vcpu_whp.cc on src/x86.cc) under TurboSpace's
+# hv-partition, the pair HeapVM runs.
+if [[ ! -f "$ROOT/WASMGocOS/src/session.cc" ]]; then
+  echo "error: wasigocvm requires WASMGocOS/ in this repo (src/session.cc)" >&2
   exit 2
 fi
+if [[ ! -f "$ROOT/WASMNetStack/include/wns/stack.h" ]]; then
+  echo "error: wasigocvm requires WASMNetStack/ in this repo (wns/stack.h)" >&2
+  exit 2
+fi
+GOCOS_I=(-I "$ROOT/WASMGocOS/include" -I "$ROOT/WASMNetStack/include" -I "$ROOT/WASMNetStack/src")
+GOCOS_D=(-DWASIGO_HAS_WASMGOCOS=1 -DWASMGOCOS_HAS_JITRT=1 -DWASMGOCOS_HAS_VCPU=1 -DWASMGOCOS_HAS_NET=1)
+GOCOS_CC=()
+for f in catalog unil host_wasi jitrt bbx session sh ctr svc react peinterp wasi files klock stream net x86 vcpu_whp; do
+  GOCOS_CC+=("$ROOT/WASMGocOS/src/$f.cc")
+done
+echo "[wasigocvm] WASMGocOS kernel, Plan 9 session, Sh, Vfs, WHv vCPU"
+
+# WASMWine: kernel32/ntdll PE images for peinterp, when the sibling is there.
+WINE_I=()
+WINE_CC=()
+for d in "${HOME}/WASMWine" "$ROOT/../WASMWine"; do
+  if [[ -f "$d/include/wine/dll.h" ]]; then
+    WINE_I=(-I "$d/include")
+    WINE_CC=("$d/src/dll.cc")
+    echo "[wasigocvm] WASMWine PE images"
+    break
+  fi
+done
+
+# WASMTurboSpace: host-calls, the hv-partition, and the engine GocOS runs
+# its guests on (wasmturbo_engine as its CMakeLists.txt builds it).
+TURBO=""
+for d in "${HOME}/WASMTurboSpace" "$ROOT/../WASMTurboSpace"; do
+  [[ -f "$d/src/hostcalls/host-calls.cc" ]] && { TURBO="$d"; break; }
+done
+if [[ -z "$TURBO" ]]; then
+  echo "error: wasigocvm requires WASMTurboSpace (host-calls.cc)" >&2
+  exit 2
+fi
+TURBO_I=(-I "$TURBO" -I "$TURBO/include")
+TURBO_CC=("$TURBO/src/hostcalls/host-calls.cc" "$TURBO/src/runtime/reactos.cc" "$TURBO/src/exec/executable-memory-posix.cc" "$TURBO/src/hv/hv-partition.cc")
+for f in wasm/module-decoder liftoff/liftoff-compiler runtime/trap runtime/exn runtime/imports runtime/context runtime/memory runtime/runtime runtime/intern runtime/call runtime/bulk runtime/lazy runtime/unil runtime/mss runtime/dllwasm runtime/vfs turbofan/graph-builder turbofan/reducer turbofan/scheduler turbofan/codegen turbofan/pipeline interp/interpreter instance; do
+  TURBO_CC+=("$TURBO/src/$f.cc")
+done
+echo "[wasigocvm] WASMTurboSpace host-calls and engine (runtime, Vfs, UNIL, tiers)"
+
+# WASMNetStack: the Plan 9 hop GocKrnl boots over. With WASMReact linked,
+# its unity.cc already compiles rpc.cc and locator.cc.
+WNS_CC=()
+for f in addr classify nat gossip wss chunk demux assoc gls bgp dns ua anycast stack ipify flow proxy sock link proxyd tty status c/system; do
+  WNS_CC+=("$ROOT/WASMNetStack/src/$f.cc")
+done
+[[ -z "$REACT_ROOT" || ${#REACT_CC[@]} -eq 0 ]] && WNS_CC+=("$ROOT/WASMNetStack/src/rpc.cc" "$ROOT/WASMNetStack/src/locator.cc")
+echo "[wasigocvm] WASMNetStack (Plan 9 session link)"
 
 CHROME_I=()
 CHROME_CC=()
@@ -230,6 +319,7 @@ if [[ -n "$SAFE_ROOT" ]]; then
     "$SAFE_ROOT/src/sandbox/sandbox.cc"
     "$SAFE_ROOT/src/sandbox/external-pointer-table.cc"
     "$SAFE_ROOT/src/sandbox/trusted-pointer-table.cc"
+    "$SAFE_ROOT/src/sandbox/code-pointer-table.cc"
   )
   echo "[wasigocvm] WASMSafeSpace EPT/TPT (exec second address space)"
 fi
@@ -306,6 +396,52 @@ for sym in fopen fclose fread fwrite fflush fseek ftell fseeko ftello fileno fdo
   opendir readdir closedir pipe dup dup2; do
   GOCLC_WRAP+=("-Wl,--wrap=${sym}")
 done
+# GocOS containers (ctr.cc): wasmv8_facade over the one quickjs-ng
+# WASMv8bindings FetchContents (target qjs, v0.16.2). No second tree.
+V8F_CC=()
+for f in isolate context exception object template function script primitive; do
+  V8F_CC+=("$V8_ROOT/src/v8/$f.cc")
+done
+QJS_SRC=""
+for d in \
+  "$V8_ROOT/build-wasi/_deps/quickjs-src" \
+  "$V8_ROOT/build/_deps/quickjs-src" \
+  "$ROOT/../WASMVoodooCompile/WASMv8bindings/build-wasi/_deps/quickjs-src" \
+  "${HOME}/WASMVoodooCompile/WASMv8bindings/build-wasi/_deps/quickjs-src" \
+  "$ROOT/../WASMVoodooCompile/WASMv8bindings/build/_deps/quickjs-src" \
+  "${HOME}/WASMVoodooCompile/WASMv8bindings/build/_deps/quickjs-src"
+do
+  if [[ -z "$QJS_SRC" && -f "$d/quickjs.c" ]]; then
+    QJS_SRC="$d"
+  fi
+done
+if [[ -z "$QJS_SRC" ]]; then
+  echo "error: wasigocvm needs the quickjs WASMv8bindings already fetched (target qjs, v0.16.2)." >&2
+  echo "       Configure that repo so wasmv8_facade exists. Do not vendor a second quickjs-ng." >&2
+  exit 2
+fi
+QJS_OUT="$ROOT/build/wasigocvm-quickjs"
+QJS_STAMP=""
+[[ -f "$QJS_OUT/qjs.src" ]] && QJS_STAMP="$(tr -d '\r' < "$QJS_OUT/qjs.src")"
+if [[ "$QJS_STAMP" != "$QJS_SRC" ]]; then
+  rm -rf "$QJS_OUT"
+fi
+mkdir -p "$QJS_OUT"
+printf '%s\n' "$QJS_SRC" > "$QJS_OUT/qjs.src"
+CC_C="${CLANG/clang++/clang}"
+QJS_O=()
+for f in quickjs libregexp libunicode dtoa quickjs-libc; do
+  if [[ ! -f "$QJS_OUT/$f.o" ]]; then
+    "$CC_C" -c -O2 -std=gnu11 -funsigned-char -fvisibility=hidden -mllvm -wasm-enable-sjlj \
+      -DQJS_BUILD_LIBC -DQUICKJS_NG_BUILD -D_GNU_SOURCE -D_REENTRANT -D_WASI_EMULATED_GETPID \
+      -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_SIGNAL \
+      -isystem "$SYSROOT/include/$TRIPLE" -isystem "$SYSROOT/include" -I "$QJS_SRC" \
+      -o "$QJS_OUT/$f.o" "$QJS_SRC/$f.c"
+  fi
+  QJS_O+=("$QJS_OUT/$f.o")
+done
+echo "[wasigocvm] quickjs-ng from WASMv8bindings ($QJS_SRC)"
+
 "$CLANG" -O2 -std=c++20 -fuse-ld=lld \
   -fexceptions -frtti \
   -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false \
@@ -318,10 +454,10 @@ done
   -Wl,--export=__indirect_function_table \
   "${GOCLC_WRAP[@]}" \
   "${PTHREAD_FLAGS[@]}" \
-  -I "$GO_DIR" -I "$ROOT/src" "${WIN32_I[@]}" "${NIX_I[@]}" "${DROID_I[@]}" "${GOCOS_I[@]}" "${CHROME_I[@]}" "${PE_I[@]}" "${SAFE_I[@]}" "${V8_I[@]}" "${SSL_I[@]}" \
-  -DWASIGO_GOCVM=1 "${CHROME_D[@]}" "${SSL_D[@]}" -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID \
-  -lwasi-emulated-mman -lsetjmp \
-  -o "$OUTWASM" "$GENCPP" "$ROOT/libc/goclibc.c" "${WIN32_CC[@]}" "${NIX_CC[@]}" "${DROID_CC[@]}" "${GOCOS_CC[@]}" "${CHROME_CC[@]}" "${SAFE_CC[@]}" "${V8_CC[@]}" "${SSL_L[@]}"
+  -I "$GO_DIR" -I "$ROOT/src" "${TURBO_I[@]}" "${WIN32_I[@]}" "${NIX_I[@]}" "${DROID_I[@]}" "${GOCOS_I[@]}" "${WINE_I[@]}" "${CHROME_I[@]}" "${PE_I[@]}" "${SAFE_I[@]}" "${V8_I[@]}" "${SSL_I[@]}" "${REACT_I[@]}" "${WEBGPU_I[@]}" -I "$QJS_SRC" \
+  -DWASIGO_GOCVM=1 "${CHROME_D[@]}" "${GOCOS_D[@]}" "${WEBGPU_D[@]}" "${SSL_D[@]}" "${REACT_D[@]}" -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS -D_REENTRANT \
+  -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks -lsetjmp \
+  -o "$OUTWASM" "$GENCPP" "$ROOT/libc/goclibc.c" "$SYSROOT/src/getpid.c" "${TURBO_CC[@]}" "${WIN32_CC[@]}" "${NIX_CC[@]}" "${DROID_CC[@]}" "${GOCOS_CC[@]}" "${WINE_CC[@]}" "${WNS_CC[@]}" "${V8F_CC[@]}" "${QJS_O[@]}" "${CHROME_CC[@]}" "${SAFE_CC[@]}" "${V8_CC[@]}" "${REACT_CC[@]}" "${WEBGPU_CC[@]}" "${SSL_L[@]}"
 
 echo
 echo "wasm: $OUTWASM"

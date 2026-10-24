@@ -191,6 +191,8 @@ file(MAKE_DIRECTORY "${WASIGO_GEN_DIR}")
 function(wasigo_add_golden name go_rel_path expected_output)
   set(gen_cpp "${WASIGO_GEN_DIR}/${name}.cpp")
   set(go_src "${CMAKE_CURRENT_SOURCE_DIR}/examples/${go_rel_path}")
+  # wasigo_add_wasigocvm_golden builds this source through the driver.
+  set_property(GLOBAL PROPERTY WASIGO_GO_SRC_${name} "${go_src}")
 
   add_custom_command(
     OUTPUT "${gen_cpp}"
@@ -243,39 +245,42 @@ endfunction()
 # full libc++ / EH / RTTI and -DWASIGO_GOCVM=1. Still uses the stock
 # wasm32-wasip2-clang++ wrapper until toolchain/ ships our own triple.
 # NETWORK grants wasmtime -S inherit-network/tcp/udp. Always -W exceptions.
+# A wasigocvm golden is built by the product driver (wasigocvm.bat /
+# wasigocvm.sh) from the .go source wasigo_add_golden registered, so it
+# links what `compile.bat prog.go` links, and runs on wasitime (this repo's
+# runtime, which answers goclibc); tests/golden/run_wasigocvm.cmake.
 function(wasigo_add_wasigocvm_golden name expected_output)
   if(NOT WASIGO_CLANGXX_P2)
     return()
   endif()
   cmake_parse_arguments(P2 "NETWORK" "" "" ${ARGN})
-  set(gen_cpp "${WASIGO_GEN_DIR}/${name}.cpp")
+  get_property(go_src GLOBAL PROPERTY WASIGO_GO_SRC_${name})
+  if(NOT go_src)
+    message(FATAL_ERROR "wasigo_add_wasigocvm_golden(${name}): no wasigo_add_golden(${name} ...) before it")
+  endif()
+  if(WIN32)
+    set(driver "${CMAKE_CURRENT_SOURCE_DIR}/wasigocvm.bat")
+    set(runtime "${CMAKE_CURRENT_SOURCE_DIR}/wasitime.bat")
+  else()
+    set(driver "${CMAKE_CURRENT_SOURCE_DIR}/wasigocvm.sh")
+    set(runtime "${CMAKE_CURRENT_SOURCE_DIR}/wasitime.sh")
+  endif()
   set(gen_wasm "${WASIGO_GEN_DIR}/${name}.gocvm.wasm")
   set(expected_file "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/expected/${name}.txt")
   set(_expected_file_arg)
   if(EXISTS "${expected_file}")
     set(_expected_file_arg "-DEXPECTED_OUTPUT_FILE=${expected_file}")
   endif()
-  set(_wasi_s)
-  if(P2_NETWORK)
-    set(_wasi_s "-DWASMTIME_WASI=inherit-network;tcp;udp")
-  endif()
   add_test(
     NAME ${name}_wasigocvm
     COMMAND ${CMAKE_COMMAND}
-            -DCLANGXX=${WASIGO_CLANGXX_P2}
-            -DSYSROOT=${WASIGO_GOCVM_SYSROOT}
-            -DINCLUDE_DIR=${WASIGO_GEN_DIR}
-            -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/src
-            -DCPP_FILE=${gen_cpp}
+            -DDRIVER=${driver}
+            -DRUNTIME=${runtime}
+            -DGO_FILE=${go_src}
             -DWASM_FILE=${gen_wasm}
-            -DWASMTIME=${WASIGO_WASMTIME}
-            -DWASI_PREVIEW=p2
-            -DWASIGO_CXXLIB=full
-            -DWASMTIME_WASM=exceptions
             "-DEXPECTED_OUTPUT=${expected_output}"
             ${_expected_file_arg}
-            ${_wasi_s}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/run_golden.cmake"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/run_wasigocvm.cmake"
   )
 endfunction()
 
